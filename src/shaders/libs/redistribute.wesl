@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Golden_Water
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 // Shared by the redistribution epoch passes.
 //
 // A sampling cell is a square pixel block; `redistribute_cells` writes one

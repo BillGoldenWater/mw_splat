@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Golden_Water
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 // Selection half of the redistribution epoch.
 //
 // The splats sitting in the least-loss cells are moved onto cells drawn from

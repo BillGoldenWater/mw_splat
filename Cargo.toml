@@ -2,7 +2,8 @@
 name = "mw_splat"
 version = "0.1.0"
 edition = "2024"
-author = ["Golden_Water"]
+authors = ["Golden_Water"]
+license = "MPL-2.0"
 
 [dependencies]
 anyhow = "1.0.104"

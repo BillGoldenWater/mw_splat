@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Golden_Water
+//
+// SPDX-License-Identifier: MPL-2.0
+
 pub const GPU_MAX_IN_FLIGHT: usize = 4;
 
 pub const TILE_SIZE: u32 = 16;

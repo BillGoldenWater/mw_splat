@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Golden_Water
+//
+// SPDX-License-Identifier: MPL-2.0
+
 use glam::{Vec3, Vec4, Vec4Swizzles as _};
 use image::{ImageBuffer, Rgba};
 

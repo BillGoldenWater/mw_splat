@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Golden_Water
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import package::libs::types::{BinHeader, Info, Splat, SplatCache};
 import package::libs::constants::{TILE_SIZE, WG_SIZE_2D};
 import package::libs::kernel::sample_kernel;

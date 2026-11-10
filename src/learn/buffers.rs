@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Golden_Water
+//
+// SPDX-License-Identifier: MPL-2.0
+
 use glam::Vec4;
 use wgpu::{Buffer, BufferUsages};
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Golden_Water
+//
+// SPDX-License-Identifier: MPL-2.0
+
 use glam::{UVec2, Vec2, Vec4};
 use image::{ImageBuffer, Rgba};
 use petgraph::unionfind::UnionFind;

@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Golden_Water
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 // Movement half of the redistribution epoch.
 //
 // A splat whose cell carries less than the donor quantile is moved onto the hot

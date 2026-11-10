@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Golden_Water
+//
+// SPDX-License-Identifier: MPL-2.0
+
 use glam::{UVec2, UVec4, Vec2, Vec4};
 use wgpu::Extent3d;
 
