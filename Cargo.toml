@@ -1,0 +1,45 @@
+[package]
+name = "mw_splat"
+version = "0.1.0"
+edition = "2024"
+author = ["Golden_Water"]
+
+[dependencies]
+anyhow = "1.0.104"
+bytemuck = { version = "1.25.2", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
+delegate = "0.13.5"
+dotenvy = "0.15.7"
+glam = { version = "0.34.1", features = ["bytemuck", "serde"] }
+image = { version = "0.25.10", default-features = false, features = [
+    "png",
+    "jpeg",
+] }
+include_dir = "0.7.4"
+petgraph = "0.8.3"
+pollster = "1.0.1"
+rand = "0.10.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+wesl = { version = "0.6.0", features = [
+    "eval",
+    "generics",
+    "package",
+    "naga-ext",
+] }
+wesl-core = "0.1.0"
+wgpu = "30.0.1"
+
+[build-dependencies]
+wesl = { version = "0.6.0", features = [
+    "eval",
+    "generics",
+    "naga-ext",
+    "package",
+] }
+
+[features]
+# default = ["gpu_profiling"]
+gpu_profiling = []
