@@ -46,7 +46,7 @@ fn adam(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) wg_nu
     grad.size = vec2f(g.w, g.h);
     grad.rot = g.rot;
     grad.color = vec4f(g.r, g.g, g.b, g.a);
-    grad.fe = vec2f(g.fe_x, g.fe_y);
+    grad.scale = vec2f(g.scale_x, g.scale_y);
 
     let splat = splats[idx];
     // straight rgb
@@ -65,7 +65,7 @@ fn adam(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) wg_nu
             grad.color.rgb * splat.color.a * rgb * (1. - rgb),
             (grad.color.a + dot(grad.color.rgb, rgb)) * splat.color.a * (1. - splat.color.a),
         );
-    raw_grad.fe = grad.fe * splat.fe * (1. - splat.fe);
+    raw_grad.scale = grad.scale * splat.scale;
 
     var m = moment1[idx];
     var v = moment2[idx];
@@ -78,8 +78,8 @@ fn adam(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) wg_nu
     v.rot = v.rot * BETA2 + raw_grad.rot * raw_grad.rot * (1.0 - BETA2);
     m.color = m.color * BETA1 + raw_grad.color * (1.0 - BETA1);
     v.color = v.color * BETA2 + raw_grad.color * raw_grad.color * (1.0 - BETA2);
-    m.fe = m.fe * BETA1 + raw_grad.fe * (1.0 - BETA1);
-    v.fe = v.fe * BETA2 + raw_grad.fe * raw_grad.fe * (1.0 - BETA2);
+    m.scale = m.scale * BETA1 + raw_grad.scale * (1.0 - BETA1);
+    v.scale = v.scale * BETA2 + raw_grad.scale * raw_grad.scale * (1.0 - BETA2);
 
     let rate = imm.lr_scale;
     let lr = info.lr;
@@ -87,27 +87,18 @@ fn adam(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) wg_nu
 
     var raw = raw_from_splat(splat);
     raw.pos -= rate * (lr.position * m.pos) / (sqrt(v.pos) + vec2f(ADAM_EPS));
-    raw.size -= rate * (lr.scale * m.size) / (sqrt(v.size) + vec2f(ADAM_EPS));
+    raw.size -= rate * (lr.size * m.size) / (sqrt(v.size) + vec2f(ADAM_EPS));
     raw.rot -= rate * lr.rotation * m.rot / (sqrt(v.rot) + ADAM_EPS);
     raw.color -= rate * (lr_col * m.color) / (sqrt(v.color) + vec4f(ADAM_EPS));
-    raw.fe -= rate * (lr.feather * m.fe) / (sqrt(v.fe) + vec2f(ADAM_EPS));
+    raw.scale -= rate * (lr.scale * m.scale) / (sqrt(v.scale) + vec2f(ADAM_EPS));
 
     raw.size = min(raw.size, vec2f(LN_SIZE_MAX));
     raw.color = clamp(raw.color, vec4f(-10.0), vec4f(10.0));
-    raw.fe = clamp(raw.fe, vec2f(-10.0), vec2f(10.0));
+    raw.scale = clamp(raw.scale, vec2f(-10.0), vec2f(10.0));
 
     splats[idx] = splat_from_raw(raw);
     moment1[idx] = m;
     moment2[idx] = v;
-}
-
-fn sigmoid_vec2(x: vec2<f32>) -> vec2<f32> {
-    return 1.0 / (1.0 + exp(-x));
-}
-
-fn logit_vec2(x: vec2<f32>) -> vec2<f32> {
-    let value = clamp(x, vec2(LOGIT_EPS), vec2(1. - LOGIT_EPS));
-    return log(value / (1. - value));
 }
 
 fn sigmoid_vec4(x: vec4<f32>) -> vec4<f32> {
@@ -132,21 +123,21 @@ fn raw_from_splat(splat: Splat) -> Splat {
             splat.pos,
             log(max(splat.size, vec2(LOGIT_EPS))),
             logit_vec4(vec4(rgb, color.a)),
-            logit_vec2(splat.fe),
+            log(max(splat.scale, vec2(LOGIT_EPS))),
             splat.rot,
         );
 }
 
 fn splat_from_raw(raw: Splat) -> Splat {
     let size = exp(raw.size);
-    let fe = sigmoid_vec2(raw.fe);
+    let scale = exp(raw.scale);
 
     var color = sigmoid_vec4(raw.color);
     color.r = color.r * color.a;
     color.g = color.g * color.a;
     color.b = color.b * color.a;
 
-    return Splat(raw.pos, size, color, fe, raw.rot);
+    return Splat(raw.pos, size, color, scale, raw.rot);
 }
 
 fn sum_grad(idx: u32, splat_count: u32) -> Gradient {
@@ -162,8 +153,8 @@ fn sum_grad(idx: u32, splat_count: u32) -> Gradient {
         total.g += g.g;
         total.b += g.b;
         total.a += g.a;
-        total.fe_x += g.fe_x;
-        total.fe_y += g.fe_y;
+        total.scale_x += g.scale_x;
+        total.scale_y += g.scale_y;
     }
     return total;
 }

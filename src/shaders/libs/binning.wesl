@@ -33,7 +33,7 @@ fn splat_tile_range(splat: Splat, info: Info) -> BinSplatTileRange {
         );
 
     // AABB
-    let half_size = rot_mat_abs * splat.size * 0.5;
+    let half_size = rot_mat_abs * (splat.size * splat.scale * 0.5);
     let pos = splat.pos;
 
     let b_min = vec2u(clamp(floor(pos - half_size), vec2f(0.), info.canvas.dimsf));
@@ -57,7 +57,7 @@ fn splat_tile_x_range(splat: Splat, info: Info, tile_y: u32) -> BinSplatTileXRan
             rot_cos, rot_sin,
             -rot_sin, rot_cos,
         );
-    let half_size = splat.size * 0.5;
+    let half_size = splat.size * splat.scale * 0.5;
     let pos = splat.pos;
     let y0 = f32(tile_y * TILE_SIZE);
     let y1 = y0 + f32(TILE_SIZE);

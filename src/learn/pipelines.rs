@@ -214,7 +214,7 @@ impl Pipelines {
 
         let splats_cache_fill = gpu
             .pipeline_layout("splats_cache_fill")
-            .push_bind_group_layout(None)
+            .push_bind_group_layout(Some(&layout_base_ro))
             .push_bind_group_layout(Some(&layout_splats_cache_fill))
             .build_compute_pipeline(
                 &gpu.shaders().splats_cache_fill,

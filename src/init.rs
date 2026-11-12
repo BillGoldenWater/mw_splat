@@ -44,7 +44,7 @@ pub fn init(
                 size: Vec2::splat(size) / canvasf,
                 rot: 0.0,
                 color,
-                fe: Vec2::splat(FEATHER),
+                scale: Vec2::ONE,
             }
         })
         .collect();

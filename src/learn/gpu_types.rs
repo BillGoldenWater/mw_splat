@@ -29,8 +29,10 @@ pub struct Canvas {
     pub dimsf: Vec2,
     // offset 16, size 4, align 4
     pub stride: u32,
-    // offset 20
-    pub _pad: [u8; 12],
+    // offset 20, size 4, align 4
+    pub ramp_cap: f32,
+    // offset 24
+    pub _pad: [u8; 8],
     // offset 32, size 16, align 16
     pub background: Vec4,
 }
@@ -49,22 +51,22 @@ impl Info {
 #[repr(C, align(4))]
 pub struct Lr {
     pub position: f32,
-    pub scale: f32,
+    pub size: f32,
     pub rotation: f32,
     pub color: f32,
     pub alpha: f32,
-    pub feather: f32,
+    pub scale: f32,
 }
 
 impl Default for Lr {
     fn default() -> Self {
         Self {
-            position: 0.95,
-            scale: 0.02,
-            rotation: 0.025,
-            color: 0.045,
-            alpha: 0.0085,
-            feather: 0.0065,
+            position: 0.7246497,
+            size: 0.025369959,
+            rotation: 0.0110587515,
+            color: 0.03130688,
+            alpha: 1.3482634,
+            scale: 0.0034468751,
         }
     }
 }
@@ -79,7 +81,7 @@ pub struct Splat {
     // offset 16, size 16, align 16
     pub color: Vec4,
     // offset 32, size 8, align 8
-    pub fe: Vec2,
+    pub scale: Vec2,
     // offset 40, size 4, align 4
     pub rot: f32,
     // offset 44
@@ -93,14 +95,14 @@ impl From<&ir::Splat> for Splat {
             size,
             rot,
             color,
-            fe,
+            scale,
         } = *value;
 
         Self {
             pos,
             size,
             color,
-            fe,
+            scale,
             rot,
             _pad: Default::default(),
         }
@@ -119,7 +121,7 @@ impl From<Splat> for ir::Splat {
             pos,
             size,
             color,
-            fe,
+            scale,
             rot,
             _pad,
         } = value;
@@ -129,7 +131,7 @@ impl From<Splat> for ir::Splat {
             size,
             rot,
             color,
-            fe,
+            scale,
         }
     }
 }
@@ -201,7 +203,7 @@ pub struct ImmRedistributeMove {
     pub _pad: [u8; 4],
 }
 
-pub const STRIDE_SPLAT_CACHE: u64 = align_to(4 + 4 + 8, 8);
+pub const STRIDE_SPLAT_CACHE: u64 = align_to(4 + 4 + 8 + 8, 8);
 pub const STRIDE_BIN_HEADER: u64 = align_to(4 + 4, 4);
 pub const STRIDE_GRADIENT: u64 = align_to(4 * 11, 4);
 pub const STRIDE_SAMPLING_CELL: u64 = align_to(4 + 4, 4);

@@ -138,7 +138,7 @@ fn backward(
 
             let b = &block_pixels[block_idx];
 
-            let smp = sample_full(splat, splat_cache, b.center);
+            let smp = sample_full(splat, splat_cache, b.center, info.canvas.ramp_cap);
             let inv = 1. - (smp.kernel * splat.color.a);
             let denom = b.t_before * inv;
             if smp.kernel > 0.0 {
@@ -160,8 +160,8 @@ fn backward(
                 grads_local.g += dk.y * smp.kernel;
                 grads_local.b += dk.z * smp.kernel;
                 grads_local.a += dk.w * smp.kernel;
-                grads_local.fe_x += smp.d_fe.x * d_kernel;
-                grads_local.fe_y += smp.d_fe.y * d_kernel;
+                grads_local.scale_x += smp.d_scale.x * d_kernel;
+                grads_local.scale_y += smp.d_scale.y * d_kernel;
                 touched = true;
             }
             b.composite *= inv;
@@ -180,8 +180,8 @@ fn backward(
             atomicAdd(&grad.g, grads_local.g);
             atomicAdd(&grad.b, grads_local.b);
             atomicAdd(&grad.a, grads_local.a);
-            atomicAdd(&grad.fe_x, grads_local.fe_x);
-            atomicAdd(&grad.fe_y, grads_local.fe_y);
+            atomicAdd(&grad.scale_x, grads_local.scale_x);
+            atomicAdd(&grad.scale_y, grads_local.scale_y);
         }
     }
 }

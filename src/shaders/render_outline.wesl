@@ -30,7 +30,7 @@ const vertices = array<vec2f, 6>(
 @vertex
 fn vs_main(@builtin(vertex_index) v_i: u32, @builtin(instance_index) i_i: u32) -> Out {
     let splat = splats[i_i];
-    let half = splat.size * 0.5;
+    let half = splat.size * splat.scale * 0.5;
 
     let local = vertices[v_i] * half;
     let rot_cos = cos(splat.rot);

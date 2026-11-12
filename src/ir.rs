@@ -28,8 +28,7 @@ pub struct Splat {
     pub rot: f32,
     /// premultiplied
     pub color: Vec4,
-    /// feather, 0..=1
-    pub fe: Vec2,
+    pub scale: Vec2,
 }
 
 impl Ir {

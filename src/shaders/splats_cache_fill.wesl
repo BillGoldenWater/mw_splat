@@ -4,8 +4,11 @@
  * SPDX-License-Identifier: MPL-2.0
  */
 
-import package::libs::types::{Splat, SplatCache};
+import package::libs::types::{Info, Splat, SplatCache};
 import package::libs::constants::WG_SIZE;
+
+@group(0) @binding(0)
+var<storage, read> info: Info;
 
 @group(1) @binding(0)
 var<storage, read> splats: array<Splat>;
@@ -23,9 +26,13 @@ fn splats_cache_fill(
     }
 
     let splat = splats[idx];
+    let raw_half = splat.size * 0.5;
+    let ramp_len = min(raw_half, vec2f(info.canvas.ramp_cap));
+    let ramp = ramp_len * splat.scale;
     splat_caches[idx] = SplatCache(
             sin(splat.rot),
             cos(splat.rot),
-            max(splat.size * splat.fe, vec2f(0.4)),
+            raw_half * splat.scale - ramp,
+            ramp,
         );
 }

@@ -31,7 +31,10 @@ pub use self::gpu_types::Lr;
 #[cfg(feature = "gpu_profiling")]
 use crate::learn::gpu_types::Timestamps;
 use crate::{
-    constants::{GPU_MAX_IN_FLIGHT, TILE_SIZE, WG_SIZE, WG_SIZE_2D},
+    constants::{
+        GPU_MAX_IN_FLIGHT, REF_HEIGHT, RFE_RAMP_CAP, TILE_SIZE, WG_SIZE,
+        WG_SIZE_2D,
+    },
     gpu::{BufferReader, GpuContext, GpuLayout},
     ir::{Ir, Splat},
     learn::{
@@ -93,6 +96,7 @@ impl Learner {
                     wgpu::COPY_BYTES_PER_ROW_ALIGNMENT.max(64)
                         / Vec4::STRIDE as u32,
                 ),
+                ramp_cap: RFE_RAMP_CAP * canvas.y as f32 / REF_HEIGHT,
                 _pad: Default::default(),
                 background: ir.background,
             },

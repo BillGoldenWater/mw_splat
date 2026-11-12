@@ -4,16 +4,6 @@
  * SPDX-License-Identifier: MPL-2.0
  */
 
-// Movement half of the redistribution epoch.
-//
-// A splat whose cell carries less than the donor quantile is moved onto the hot
-// pixel of a cell drawn from the loss distribution, then reborn with the
-// reference colour so the fit does not have to rediscover it.
-//
-// A splat that covers no sample centre - footprint between samples, faded out,
-// standing on transparent space or already gone from the canvas - draws no
-// gradient, so it is free to move at the full rate.
-
 import package::libs::types::{Info, Splat};
 import package::libs::redistribute::{RedistributeState, SamplingCell, redistribute_hash};
 import package::libs::constants::{INVERSE_CDF_SIZE, WG_SIZE};
@@ -41,18 +31,23 @@ struct Imm {
 }
 var<immediate> imm: Imm;
 
+const SPAN_MIN: f32 = 0.5;
+const SPAN_MAX: f32 = 1.5;
+const MIN_VISIBLE_ALPHA: f32 = 0.01;
+const MIN_BACKGROUND_ALPHA: f32 = 0.05;
+
 fn hot_pixel_pos(hot_px_idx: u32) -> vec2f {
     return vec2f(vec2u(hot_px_idx % info.canvas.stride, hot_px_idx / info.canvas.stride)) + 0.5;
 }
 
-fn coverage(splat_idx: u32) -> f32 {
-    let splat = splats[splat_idx];
-    let sample_pos = vec2u(clamp(splat.pos, vec2f(0.5), vec2f(info.canvas.dims) - 1.5));
-    let spans_sample = smoothstep(0.5, 1.5, min(splat.size.x, splat.size.y));
-    let visible = smoothstep(0.0, 0.01, splat.color.w);
+fn coverage(splat: Splat) -> f32 {
+    let sample_pos = vec2u(clamp(splat.pos, vec2f(0.5), vec2f(info.canvas.dims) - 0.5));
+    let extent = sqrt(splat.size.x * splat.scale.x * splat.size.y * splat.scale.y);
+    let spans_sample = smoothstep(SPAN_MIN, SPAN_MAX, extent);
+    let visible = smoothstep(0.0, MIN_VISIBLE_ALPHA, splat.color.w);
     let has_background = smoothstep(
             0.0,
-            0.05,
+            MIN_BACKGROUND_ALPHA,
             reference[sample_pos.y * info.canvas.stride + sample_pos.x].a,
         );
     return spans_sample * visible * has_background;
@@ -65,12 +60,13 @@ fn redistribute_move(@builtin(global_invocation_id) id: vec3u) {
         return;
     }
 
-    let cell_coord = vec2i(splats[splat_idx].pos / f32(imm.cell_size));
-    let off_grid = any(cell_coord < vec2i(0)) || any(cell_coord >= vec2i(imm.grid_dims));
+    let splat = &splats[splat_idx];
+    let off_grid = any(splat.pos < vec2f(0.)) || any(splat.pos >= info.canvas.dimsf);
 
-    let uncovered = 1.0 - coverage(splat_idx);
+    let uncovered = 1.0 - coverage(*splat);
     var should_move = off_grid || redistribute_hash(splat_idx, 7u) < uncovered;
-    if !should_move && !off_grid {
+    if !should_move {
+        let cell_coord = vec2i(splat.pos / f32(imm.cell_size));
         let cell_idx = u32(cell_coord.x) + u32(cell_coord.y) * imm.grid_dims.x;
         let cell_loss = sampling_cells[cell_idx].loss;
         let below_boundary = cell_loss < state.boundary_lo;
@@ -92,9 +88,9 @@ fn redistribute_move(@builtin(global_invocation_id) id: vec3u) {
     let dest_px = u32(destination.y) * info.canvas.stride + u32(destination.x);
     let target_color = reference[dest_px];
 
-    splats[splat_idx].pos = destination;
-    splats[splat_idx].size = vec2f(imm.splat_size);
-    splats[splat_idx].color = target_color;
-    splats[splat_idx].fe = vec2f(0.5);
-    splats[splat_idx].rot = 0.0;
+    splat.pos = destination;
+    splat.size = vec2f(imm.splat_size);
+    splat.color = target_color;
+    splat.scale = vec2f(1.0);
+    splat.rot = 0.0;
 }

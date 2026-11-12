@@ -145,11 +145,11 @@ fn default_theta() -> [f32; N_PARAMS] {
     let lr = Lr::default();
     [
         lr.position.log2(),
-        lr.scale.log2(),
+        lr.size.log2(),
         lr.rotation.log2(),
         lr.color.log2(),
         lr.alpha.log2(),
-        lr.feather.log2(),
+        lr.scale.log2(),
         DEFAULT_REDISTRIBUTE.log2(),
     ]
 }
@@ -161,7 +161,7 @@ fn clamp_theta(
 ) -> [f32; N_PARAMS] {
     let mut t = theta;
     for v in &mut t[..6] {
-        *v = v.clamp(-20.0, 0.0);
+        *v = v.clamp(-20.0, 2.0);
     }
     if tune_redistribute {
         t[6] = t[6].clamp(0.0, (iters as f32).log2());
@@ -176,11 +176,11 @@ fn theta_to_params(
 ) -> (Lr, Option<u32>) {
     let lr = Lr {
         position: 2f32.powf(theta[0]),
-        scale: 2f32.powf(theta[1]),
+        size: 2f32.powf(theta[1]),
         rotation: 2f32.powf(theta[2]),
         color: 2f32.powf(theta[3]),
         alpha: 2f32.powf(theta[4]),
-        feather: 2f32.powf(theta[5]),
+        scale: 2f32.powf(theta[5]),
     };
     let redistribute = if tune_redistribute {
         Some((2f32.powf(theta[6]).round() as u32).clamp(1, iters))
@@ -201,6 +201,7 @@ fn evaluate(
 ) -> f32 {
     let (lr, redistribute) =
         theta_to_params(theta, iters, tune_redistribute);
+    tracing::debug!("{lr:?}");
     let config = Config { lr_scale: 1.0, lr };
 
     let mut sum = 0.0f32;

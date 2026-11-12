@@ -14,8 +14,8 @@ struct Gradient {
     g: f32,
     b: f32,
     a: f32,
-    fe_x: f32,
-    fe_y: f32,
+    scale_x: f32,
+    scale_y: f32,
 }
 
 struct GradientAtomic {
@@ -28,6 +28,6 @@ struct GradientAtomic {
     g: atomic<f32>,
     b: atomic<f32>,
     a: atomic<f32>,
-    fe_x: atomic<f32>,
-    fe_y: atomic<f32>,
+    scale_x: atomic<f32>,
+    scale_y: atomic<f32>,
 }
