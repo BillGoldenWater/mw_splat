@@ -10,7 +10,7 @@ use std::{
 
 use bytemuck::bytes_of;
 use glam::{UVec2, UVec3, UVec4, Vec4};
-use image::{ImageBuffer, Rgba};
+use image::{ImageBuffer, Luma, Rgba};
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "gpu_profiling")]
 use wgpu::{
@@ -94,7 +94,7 @@ impl Learner {
                 dimsf: canvas.as_vec2(),
                 stride: canvas.x.next_multiple_of(
                     wgpu::COPY_BYTES_PER_ROW_ALIGNMENT.max(64)
-                        / Vec4::STRIDE as u32,
+                        / f32::STRIDE as u32,
                 ),
                 ramp_cap: RFE_RAMP_CAP * canvas.y as f32 / REF_HEIGHT,
                 _pad: Default::default(),
@@ -111,30 +111,12 @@ impl Learner {
         gpu.write_buffer(&buffers.info, 0, bytes_of(&info));
 
         // reference
-        {
-            let size = buffers.reference.size().try_into().unwrap();
-            let mut write_view = gpu
-                .write_buffer_with(&buffers.reference, 0, size)
-                .unwrap();
-
-            let px_stride = Vec4::STRIDE as usize;
-            let src_stride = canvas.x as usize * px_stride;
-            let tgt_stride = info.canvas.stride as usize * px_stride;
-
-            let y_range = 0..(canvas.y as usize);
-            for (src_y, tgt_y) in (y_range.clone()).zip(y_range.rev()) {
-                let src_base = src_y * src_stride;
-                let tgt_base = tgt_y * tgt_stride;
-
-                let src_range = src_base..src_base + src_stride;
-                let tgt_range = tgt_base..tgt_base + src_stride;
-
-                let raw_src: &[u8] =
-                    bytemuck::cast_slice(reference.as_raw());
-                let mut tgt = write_view.slice(tgt_range);
-                tgt.copy_from_slice(&raw_src[src_range]);
-            }
-        }
+        gpu.buffer_write_image(
+            reference,
+            &buffers.reference,
+            info.canvas.stride as _,
+            true,
+        );
 
         // splats
         {
@@ -194,10 +176,40 @@ impl Learner {
 
         this.reset_overflow();
 
+        let ones = ImageBuffer::from_pixel(
+            this.info.canvas.dims.x,
+            this.info.canvas.dims.y,
+            Luma([1.0]),
+        );
+        this.set_loss_weights(&ones);
+
         this.gpu.queue().submit([]);
         this.gpu.poll_blocking();
 
         this
+    }
+
+    pub fn loss_weights_buffer(&self) -> &wgpu::Buffer {
+        &self.buffers.loss_weights
+    }
+
+    pub fn set_loss_weights(
+        &self,
+        weights: &ImageBuffer<Luma<f32>, Vec<f32>>,
+    ) {
+        let dims = self.info.canvas.dims;
+        assert_eq!(
+            weights.dimensions(),
+            (dims.x, dims.y),
+            "loss weights must match the canvas size",
+        );
+
+        self.gpu.buffer_write_image(
+            weights,
+            &self.buffers.loss_weights,
+            self.info.canvas.stride as _,
+            true,
+        );
     }
 
     pub fn reset_overflow(&self) {
@@ -634,10 +646,11 @@ impl Learner {
         let mut img = self
             .gpu
             .buffer_reader::<(), ()>(self.buffers.pixels.clone())
-            .read_image_blocking_rgbaf32_rev_y(
+            .read_image_blocking(
                 &self.gpu,
                 self.info.canvas.dims,
                 self.info.canvas.stride,
+                true,
             );
         img.unpremultiply();
 
@@ -807,10 +820,11 @@ impl Learner {
         let mut img = self
             .gpu
             .buffer_reader::<(), ()>(readback)
-            .read_image_blocking_rgbaf32_rev_y(
+            .read_image_blocking(
                 &self.gpu,
                 self.info.canvas.dims,
                 self.info.canvas.stride,
+                true,
             );
         img.unpremultiply();
 

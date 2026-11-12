@@ -38,6 +38,8 @@ var<storage, read> bin_data: array<u32>;
 var<storage, read> pixels: array<vec4f>;
 @group(4) @binding(1)
 var<storage, read> transmittance: array<f32>;
+@group(4) @binding(2)
+var<storage, read> loss_weights: array<f32>;
 
 @group(5) @binding(0)
 var<storage, read_write> grads: array<GradientAtomic>;
@@ -89,15 +91,16 @@ fn backward(
         block_pixels[block_idx].t_before = 1.;
 
         let px_idx = px_pos.x + px_pos.y * info.canvas.stride;
+        let weight = loss_weights[px_idx];
         let px = pixels[px_idx];
         let tgt = reference[px_idx];
         let black = px.rgb - tgt.rgb;
         let white = black + vec3f(tgt.a - px.a);
-        block_loss += (dot(black, black) + dot(white, white)) * loss_norm;
+        block_loss += (dot(black, black) + dot(white, white)) * loss_norm * weight;
 
         block_pixels[block_idx].adjoint = vec4f(
-                (black + white) * (2.0 * loss_norm),
-                -2.0 * loss_norm * (white.x + white.y + white.z),
+                (black + white) * (2.0 * loss_norm * weight),
+                -2.0 * loss_norm * weight * (white.x + white.y + white.z),
             );
         block_pixels[block_idx].transmittance = transmittance[px_idx];
     }

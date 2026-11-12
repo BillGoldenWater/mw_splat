@@ -33,6 +33,7 @@ pub struct Buffers {
 
     pub pixels: Buffer,
     pub transmittance: Buffer,
+    pub loss_weights: Buffer,
 
     /// clear every pass
     pub gradients: Buffer,
@@ -123,6 +124,11 @@ impl Buffers {
             f32::STRIDE * canvas_buffer_cap,
             BufferUsages::STORAGE,
         );
+        let loss_weights = gpu.create_buffer(
+            "loss_weights",
+            f32::STRIDE * canvas_buffer_cap,
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
 
         let gradients = gpu.create_buffer(
             "gradients",
@@ -175,6 +181,7 @@ impl Buffers {
             bin_data,
             pixels,
             transmittance,
+            loss_weights,
             gradients,
             loss,
             adam_moment1,

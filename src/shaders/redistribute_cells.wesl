@@ -15,6 +15,8 @@ var<storage, read> reference: array<vec4f>;
 
 @group(1) @binding(0)
 var<storage, read> pixels: array<vec4f>;
+@group(1) @binding(2)
+var<storage, read> loss_weights: array<f32>;
 
 @group(2) @binding(0)
 var<storage, read_write> sampling_cells: array<SamplingCell>;
@@ -39,11 +41,12 @@ fn redistribute_cells(@builtin(global_invocation_id) id: vec3u) {
     for(var y = px_base.y; y < px_max.y; y++) {
         for(var x = px_base.x; x < px_max.x; x++) {
             let px_idx = x + y * info.canvas.stride;
+            let weight = loss_weights[px_idx];
             let px = pixels[px_idx];
             let tgt = reference[px_idx];
             let black = px.rgb - tgt.rgb;
             let white = black + vec3f(tgt.a - px.a);
-            let loss = (dot(black, black) + dot(white, white)) / 6.0;
+            let loss = (dot(black, black) + dot(white, white)) / 6.0 * weight;
             loss_sum += loss;
             if loss > peak {
                 peak = loss;

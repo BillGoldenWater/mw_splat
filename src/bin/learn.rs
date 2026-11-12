@@ -10,8 +10,9 @@ use image::DynamicImage;
 use mw_splat::{
     gpu::GpuContext,
     init::init,
+    ir::Ir,
     learn::Learner,
-    utils::{init_env, load_premultiplied},
+    utils::{init_env, load_loss_weights, load_premultiplied},
 };
 
 #[derive(Parser)]
@@ -19,6 +20,14 @@ struct Cli {
     /// Image to load.
     #[arg(short = 'i', long)]
     input: PathBuf,
+
+    /// Optional per-pixel loss weight map (grayscale).
+    #[arg(short = 'w', long)]
+    weights: Option<PathBuf>,
+
+    /// Optional initial splats JSON to load instead of running init.
+    #[arg(short = 'R', long)]
+    reuse: Option<PathBuf>,
 
     /// Splats to emit.
     #[arg(short = 'n', long, default_value_t = 8000)]
@@ -52,8 +61,14 @@ fn main() -> Result<()> {
     let input = load_premultiplied(&cli.input)?;
     let gpu = GpuContext::new()?;
 
-    let mut ir = init(&input, cli.splats, cli.seed);
+    let mut ir = match &cli.reuse {
+        Some(path) => Ir::load_json(path)?,
+        None => init(&input, cli.splats, cli.seed),
+    };
     let mut learner = Learner::new(gpu, &input, Default::default(), &ir);
+    if let Some(weights) = &cli.weights {
+        learner.set_loss_weights(&load_loss_weights(weights)?);
+    }
     learner.run(cli.iters, cli.lr, Some(cli.redistribute), cli.seed);
     ir.splats = learner.read_splats();
 

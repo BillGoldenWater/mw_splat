@@ -142,6 +142,7 @@ impl Pipelines {
             .bindgroup_layout("canvas_ro")
             .push_buffer_storage(true, None)
             .push_buffer_storage(true, None)
+            .push_buffer_storage(true, None)
             .build();
 
         let layout_learn_backward = gpu

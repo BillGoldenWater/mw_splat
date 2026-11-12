@@ -11,6 +11,8 @@ pub const WG_SIZE: u32 = WG_SIZE_2D * WG_SIZE_2D;
 pub const REF_HEIGHT: f32 = 900.0;
 pub const RFE_RAMP_CAP: f32 = 64.0;
 
+pub const LOSS_WEIGHT_GAMMA: f32 = 1.4;
+
 // backward pass
 pub const GRAD_COPIES: u64 = 8;
 

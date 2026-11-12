@@ -5,6 +5,7 @@
 use std::{
     marker::PhantomData,
     num::NonZero,
+    ops::Deref,
     sync::{
         Arc,
         atomic::{self, AtomicU8},
@@ -14,7 +15,7 @@ use std::{
 use anyhow::{Context as _, Result};
 use bytemuck::Pod;
 use glam::UVec2;
-use image::{ImageBuffer, Rgba};
+use image::{ImageBuffer, Pixel};
 use wesl::{CompileOptions, Compiler, resolver::VirtualResolver};
 use wgpu::{
     Backends, BindGroup, BindGroupDescriptor, BindGroupEntry,
@@ -30,8 +31,11 @@ use wgpu::{
     TextureDescriptor,
 };
 
-use crate::constants::{
-    GRAD_COPIES, INVERSE_CDF_SIZE, TILE_SIZE, WG_SIZE, WG_SIZE_2D,
+use crate::{
+    constants::{
+        GRAD_COPIES, INVERSE_CDF_SIZE, TILE_SIZE, WG_SIZE, WG_SIZE_2D,
+    },
+    utils::copy_with_stride,
 };
 
 #[derive(Clone)]
@@ -214,6 +218,39 @@ impl GpuContext {
         self.poll_blocking();
 
         reader.try_resolve_read_pod().unwrap().0
+    }
+
+    pub fn buffer_write_image<P, S, C>(
+        &self,
+        img: &ImageBuffer<P, C>,
+        buffer: &Buffer,
+        stride: usize,
+        rev_y: bool,
+    ) where
+        P: Pixel<Subpixel = S>,
+        S: Pod + GpuLayout,
+        C: Deref<Target = [S]>,
+    {
+        let size = buffer.size().try_into().unwrap();
+        let mut write_view =
+            self.write_buffer_with(buffer, 0, size).unwrap();
+        let raw_src: &[u8] = bytemuck::cast_slice(img.as_raw());
+
+        let px_stride = P::CHANNEL_COUNT as usize * S::STRIDE as usize;
+        let dims = UVec2::from(img.dimensions()).as_usizevec2();
+
+        let width = dims.x * px_stride;
+        let tgt_stride = stride * px_stride;
+        copy_with_stride(
+            width,
+            dims.y,
+            width,
+            tgt_stride,
+            rev_y,
+            |src, tgt| {
+                write_view.slice(tgt).copy_from_slice(&raw_src[src]);
+            },
+        );
     }
 
     pub fn poll_blocking(&self) {
@@ -686,39 +723,43 @@ impl<T, U> BufferReader<T, U> {
         true
     }
 
-    pub fn read_image_blocking_rgbaf32_rev_y(
+    pub fn read_image_blocking<P, S, C>(
         &mut self,
         gpu: &GpuContext,
         dims: UVec2,
         stride: u32,
-    ) -> ImageBuffer<Rgba<f32>, Vec<f32>>
+        rev_y: bool,
+    ) -> ImageBuffer<P, C>
     where
         U: Default,
+        P: Pixel<Subpixel = S>,
+        S: Pod + GpuLayout + Default,
+        C: From<Vec<S>> + Deref<Target = [S]>,
     {
-        let mut buffer = vec![0f32; dims.element_product() as usize * 4];
+        let ch = P::CHANNEL_COUNT as usize;
+        let mut buffer =
+            vec![S::default(); dims.element_product() as usize * ch];
 
         let (width, height) = dims.as_usizevec2().into();
         self.read_blocking(gpu, |view| {
-            let view: &[f32] = bytemuck::cast_slice(view);
-            let stride = stride as usize;
-            assert_eq!(view.len() / stride / 4, height);
+            let view: &[S] = bytemuck::cast_slice(view);
+            let stride = stride as usize * ch;
+            assert_eq!(view.len() / stride, height);
 
-            let src_stride = stride * 4;
-            let tgt_stride = width * 4;
-
-            let y_range = 0..(dims.y as usize);
-            for (src_y, tgt_y) in (y_range.clone()).zip(y_range.rev()) {
-                let src_base = src_y * src_stride;
-                let tgt_base = tgt_y * tgt_stride;
-
-                let src_range = src_base..src_base + tgt_stride;
-                let tgt_range = tgt_base..tgt_base + tgt_stride;
-
-                buffer[tgt_range].copy_from_slice(&view[src_range]);
-            }
+            let width = width * 4;
+            copy_with_stride(
+                width,
+                height,
+                stride,
+                width,
+                rev_y,
+                |src, tgt| {
+                    buffer[tgt].copy_from_slice(&view[src]);
+                },
+            );
         });
 
-        ImageBuffer::from_raw(dims.x, dims.y, buffer).unwrap()
+        ImageBuffer::from_raw(dims.x, dims.y, buffer.into()).unwrap()
     }
 }
 

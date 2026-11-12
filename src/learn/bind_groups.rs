@@ -110,6 +110,7 @@ impl BindGroups {
             .bindgroup("canvas_ro", &pipelines.layout_canvas_ro)
             .push_entry_buffer(&buffers.pixels)
             .push_entry_buffer(&buffers.transmittance)
+            .push_entry_buffer(&buffers.loss_weights)
             .build();
         let canvas_rw = gpu
             .bindgroup("canvas_rw", &pipelines.layout_canvas_rw)
