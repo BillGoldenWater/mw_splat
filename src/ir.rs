@@ -50,8 +50,12 @@ impl Ir {
             .truncate(true)
             .open(path)
             .context("open file")?;
+        #[cfg(feature = "ir_pretty")]
         serde_json::to_writer_pretty(writer, self)
             .context("serde_json::to_writer_pretty")?;
+        #[cfg(not(feature = "ir_pretty"))]
+        serde_json::to_writer(writer, self)
+            .context("serde_json::to_writer")?;
         Ok(())
     }
 }
