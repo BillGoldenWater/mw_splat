@@ -23,6 +23,11 @@ var<storage, read> state: RedistributeState;
 @group(2) @binding(2)
 var<storage, read> inverse_cdf: array<u32>;
 
+@group(3) @binding(0)
+var<storage, read_write> moment1: array<Splat>;
+@group(3) @binding(1)
+var<storage, read_write> moment2: array<Splat>;
+
 struct Imm {
     grid_dims: vec2u,
     cell_size: u32,
@@ -35,6 +40,7 @@ const SPAN_MIN: f32 = 0.5;
 const SPAN_MAX: f32 = 1.5;
 const MIN_VISIBLE_ALPHA: f32 = 0.01;
 const MIN_BACKGROUND_ALPHA: f32 = 0.05;
+const MOVED_ORDER_BASE: u32 = 1u << 31u;
 
 fn hot_pixel_pos(hot_px_idx: u32) -> vec2f {
     return vec2f(vec2u(hot_px_idx % info.canvas.stride, hot_px_idx / info.canvas.stride)) + 0.5;
@@ -54,8 +60,11 @@ fn coverage(splat: Splat) -> f32 {
 }
 
 @compute @workgroup_size(WG_SIZE)
-fn redistribute_move(@builtin(global_invocation_id) id: vec3u) {
-    let splat_idx = id.x;
+fn redistribute_move(
+    @builtin(global_invocation_id) id: vec3u,
+    @builtin(num_workgroups) wg_num: vec3u,
+) {
+    let splat_idx = id.x + id.y * WG_SIZE * wg_num.x;
     if splat_idx >= arrayLength(&splats) {
         return;
     }
@@ -75,6 +84,7 @@ fn redistribute_move(@builtin(global_invocation_id) id: vec3u) {
         should_move = below_boundary || boundary_donor;
     }
     if !should_move {
+        splat.order = splat_idx;
         return;
     }
 
@@ -93,4 +103,7 @@ fn redistribute_move(@builtin(global_invocation_id) id: vec3u) {
     splat.color = target_color;
     splat.scale = vec2f(1.0);
     splat.rot = 0.0;
+    splat.order = MOVED_ORDER_BASE + splat_idx;
+    moment1[splat_idx] = Splat();
+    moment2[splat_idx] = Splat();
 }

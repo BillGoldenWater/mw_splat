@@ -455,6 +455,7 @@ pub struct Shaders {
     pub redistribute_cells: ShaderModule,
     pub redistribute_select: ShaderModule,
     pub redistribute_move: ShaderModule,
+    pub redistribute_sort: ShaderModule,
 }
 
 impl Shaders {
@@ -546,6 +547,7 @@ const INVERSE_CDF_SIZE: u32 = {INVERSE_CDF_SIZE}u;
             redistribute_cells,
             redistribute_select,
             redistribute_move,
+            redistribute_sort,
         ];
 
         Self {
@@ -563,6 +565,7 @@ const INVERSE_CDF_SIZE: u32 = {INVERSE_CDF_SIZE}u;
             redistribute_cells,
             redistribute_select,
             redistribute_move,
+            redistribute_sort,
         }
     }
 }

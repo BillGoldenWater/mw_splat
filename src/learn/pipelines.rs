@@ -8,7 +8,7 @@ use crate::{
     gpu::{GpuContext, GpuLayout},
     learn::gpu_types::{
         ImmAdam, ImmBinAlloc, ImmRedistributeCells, ImmRedistributeMove,
-        ImmRedistributeSelect,
+        ImmRedistributeSelect, ImmRedistributeSort,
     },
 };
 
@@ -41,8 +41,8 @@ pub struct Pipelines {
     // gradients
     pub layout_learn_gradients_ro: BindGroupLayout,
 
-    // gradients, loss
-    pub layout_learn_adam: BindGroupLayout,
+    // moment1, moment2
+    pub layout_adam_rw: BindGroupLayout,
 
     // cells
     pub layout_redistribute_cells: BindGroupLayout,
@@ -69,6 +69,7 @@ pub struct Pipelines {
     pub redistribute_cells: ComputePipeline,
     pub redistribute_select: ComputePipeline,
     pub redistribute_move: ComputePipeline,
+    pub redistribute_sort: ComputePipeline,
 }
 
 impl Pipelines {
@@ -155,8 +156,8 @@ impl Pipelines {
             .push_buffer_storage(true, None)
             .build();
 
-        let layout_learn_adam = gpu
-            .bindgroup_layout("learn_adam")
+        let layout_adam_rw = gpu
+            .bindgroup_layout("adam_rw")
             .push_buffer_storage(false, None)
             .push_buffer_storage(false, None)
             .build();
@@ -248,7 +249,7 @@ impl Pipelines {
             .push_bind_group_layout(Some(&layout_base_ro))
             .push_bind_group_layout(Some(&layout_splats_adam))
             .push_bind_group_layout(Some(&layout_learn_gradients_ro))
-            .push_bind_group_layout(Some(&layout_learn_adam))
+            .push_bind_group_layout(Some(&layout_adam_rw))
             .with_immediate_size(ImmAdam::SIZE as _)
             .build_compute_pipeline(&gpu.shaders().learn_adam, "adam");
 
@@ -276,10 +277,21 @@ impl Pipelines {
             .push_bind_group_layout(Some(&layout_base_ro))
             .push_bind_group_layout(Some(&layout_splats_redistribute))
             .push_bind_group_layout(Some(&layout_redistribute_move))
+            .push_bind_group_layout(Some(&layout_adam_rw))
             .with_immediate_size(ImmRedistributeMove::SIZE as _)
             .build_compute_pipeline(
                 &gpu.shaders().redistribute_move,
                 "redistribute_move",
+            );
+        let redistribute_sort = gpu
+            .pipeline_layout("redistribute_sort")
+            .push_bind_group_layout(None)
+            .push_bind_group_layout(Some(&layout_splats_redistribute))
+            .push_bind_group_layout(Some(&layout_adam_rw))
+            .with_immediate_size(ImmRedistributeSort::SIZE as _)
+            .build_compute_pipeline(
+                &gpu.shaders().redistribute_sort,
+                "redistribute_sort",
             );
 
         Self {
@@ -299,7 +311,7 @@ impl Pipelines {
             layout_canvas_rw,
             layout_learn_backward,
             layout_learn_gradients_ro,
-            layout_learn_adam,
+            layout_adam_rw,
             layout_redistribute_cells,
             layout_redistribute_select,
             layout_redistribute_move,
@@ -314,6 +326,7 @@ impl Pipelines {
             redistribute_cells,
             redistribute_select,
             redistribute_move,
+            redistribute_sort,
         }
     }
 }

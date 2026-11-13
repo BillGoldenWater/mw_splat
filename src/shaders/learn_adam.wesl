@@ -125,6 +125,7 @@ fn raw_from_splat(splat: Splat) -> Splat {
             logit_vec4(vec4(rgb, color.a)),
             log(max(splat.scale, vec2(LOGIT_EPS))),
             splat.rot,
+            splat.order,
         );
 }
 
@@ -137,7 +138,7 @@ fn splat_from_raw(raw: Splat) -> Splat {
     color.g = color.g * color.a;
     color.b = color.b * color.a;
 
-    return Splat(raw.pos, size, color, scale, raw.rot);
+    return Splat(raw.pos, size, color, scale, raw.rot, raw.order);
 }
 
 fn sum_grad(idx: u32, splat_count: u32) -> Gradient {

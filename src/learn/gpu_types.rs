@@ -84,8 +84,8 @@ pub struct Splat {
     pub scale: Vec2,
     // offset 40, size 4, align 4
     pub rot: f32,
-    // offset 44
-    pub _pad: [u8; 4],
+    // offset 44, size 4, align 4
+    pub order: u32,
 }
 
 impl From<&ir::Splat> for Splat {
@@ -104,7 +104,7 @@ impl From<&ir::Splat> for Splat {
             color,
             scale,
             rot,
-            _pad: Default::default(),
+            order: 0,
         }
     }
 }
@@ -123,7 +123,7 @@ impl From<Splat> for ir::Splat {
             color,
             scale,
             rot,
-            _pad,
+            order: _,
         } = value;
 
         Self {
@@ -203,6 +203,15 @@ pub struct ImmRedistributeMove {
     pub _pad: [u8; 4],
 }
 
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C, align(4))]
+pub struct ImmRedistributeSort {
+    pub stage: u32,
+    pub step: u32,
+    pub step_log2: u32,
+    pub step_mod_mask: u32,
+}
+
 pub const STRIDE_SPLAT_CACHE: u64 = align_to(4 + 4 + 8 + 8, 8);
 pub const STRIDE_BIN_HEADER: u64 = align_to(4 + 4, 4);
 pub const STRIDE_GRADIENT: u64 = align_to(4 * 11, 4);
@@ -226,6 +235,7 @@ pub struct Timestamps {
     pub redistribute_cells: u64,
     pub redistribute_select: u64,
     pub redistribute_move: u64,
+    pub redistribute_sort: u64,
 }
 
 #[cfg(feature = "gpu_profiling")]
@@ -263,6 +273,7 @@ impl Timestamps {
             write_fmt!(redistribute_cells);
             write_fmt!(redistribute_select);
             write_fmt!(redistribute_move);
+            write_fmt!(redistribute_sort);
         }
         let _ = prev;
 

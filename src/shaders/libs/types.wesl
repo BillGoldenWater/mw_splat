@@ -33,6 +33,7 @@ struct Splat {
     color: vec4f,
     scale: vec2f,
     rot: f32,
+    order: u32,
 }
 
 struct SplatCache {

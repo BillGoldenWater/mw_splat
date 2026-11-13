@@ -43,7 +43,7 @@ use crate::{
         gpu_types::{
             BinOverflow, ImmAdam, ImmBinAlloc, ImmRedistributeCells,
             ImmRedistributeMove, ImmRedistributeSelect,
-            STRIDE_SAMPLING_CELL,
+            ImmRedistributeSort, STRIDE_SAMPLING_CELL,
         },
         pipelines::Pipelines,
     },
@@ -413,7 +413,7 @@ impl Learner {
             learn_adam@i(i_learn_adam)(&ImmAdam { lr_scale }): {
                 1 = splats_adam;
                 2 = learn_gradients_ro;
-                3 = learn_adam;
+                3 = adam_rw;
             },
         };
 
@@ -592,7 +592,8 @@ impl Learner {
                 timestamp_writes: None,
             });
 
-        let splats_wg = self.spread_workgroup_to_x_y(self.splat_count);
+        let splats_wg = self
+            .spread_workgroup_to_x_y(self.splat_count.div_ceil(WG_SIZE));
         let cells_wg =
             grid_dims.map(|it| it.div_ceil(WG_SIZE_2D)).extend(1);
 
@@ -609,10 +610,49 @@ impl Learner {
             redistribute_move@n(splats_wg)(&imm_move): {
                 1 = splats_redistribute;
                 2 = redistribute_move;
+                3 = adam_rw;
             },
         };
 
+        if self.splat_count >= 2 {
+            self.dispatch_redistribute_sort(&mut pass);
+        }
+
         drop(pass);
+    }
+
+    fn dispatch_redistribute_sort(
+        &self,
+        pass: &mut wgpu::ComputePass<'_>,
+    ) {
+        pass.set_pipeline(&self.pipelines.redistribute_sort);
+        pass.set_bind_group(
+            1,
+            &self.bind_groups.splats_redistribute,
+            &[],
+        );
+        pass.set_bind_group(2, &self.bind_groups.adam_rw, &[]);
+
+        let n = self.splat_count.next_power_of_two();
+        let sort_wg =
+            self.spread_workgroup_to_x_y((n / 2).div_ceil(WG_SIZE));
+
+        for stage_log2 in 1..=n.ilog2() {
+            let stage = 1u32 << stage_log2;
+            for step_log2 in (0..stage_log2).rev() {
+                let step = 1u32 << step_log2;
+                let imm = ImmRedistributeSort {
+                    stage,
+                    step,
+                    step_log2,
+                    step_mod_mask: step - 1,
+                };
+                pass.set_immediates(0, bytes_of(&imm));
+                pass.dispatch_workgroups(sort_wg.x, sort_wg.y, sort_wg.z);
+            }
+        }
+
+        learn_write_ts!(pass, self, redistribute_sort);
     }
 
     pub fn reserve_sampling_cells(&mut self, cell_count: u64) {

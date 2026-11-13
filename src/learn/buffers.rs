@@ -138,7 +138,9 @@ impl Buffers {
         let loss = gpu.create_buffer(
             "loss",
             f32::STRIDE,
-            BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            BufferUsages::STORAGE
+                | BufferUsages::COPY_DST
+                | BufferUsages::COPY_SRC,
         );
 
         let adam_moment1 = gpu.create_buffer(

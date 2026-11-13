@@ -33,7 +33,7 @@ pub struct BindGroups {
     pub learn_backward: BindGroup,
     pub learn_gradients_ro: BindGroup,
 
-    pub learn_adam: BindGroup,
+    pub adam_rw: BindGroup,
 
     pub redistribute_cells: BindGroup,
     pub redistribute_select: BindGroup,
@@ -131,8 +131,8 @@ impl BindGroups {
             .push_entry_buffer(&buffers.gradients)
             .build();
 
-        let learn_adam = gpu
-            .bindgroup("learn_adam", &pipelines.layout_learn_adam)
+        let adam_rw = gpu
+            .bindgroup("adam_rw", &pipelines.layout_adam_rw)
             .push_entry_buffer(&buffers.adam_moment1)
             .push_entry_buffer(&buffers.adam_moment2)
             .build();
@@ -157,7 +157,7 @@ impl BindGroups {
             canvas_rw,
             learn_backward,
             learn_gradients_ro,
-            learn_adam,
+            adam_rw,
             redistribute_cells,
             redistribute_select,
             redistribute_move,
