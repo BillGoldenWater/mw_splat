@@ -33,14 +33,6 @@ wesl = { version = "0.6.0", features = [
 wesl-core = "0.1.0"
 wgpu = "30.0.1"
 
-[build-dependencies]
-wesl = { version = "0.6.0", features = [
-    "eval",
-    "generics",
-    "naga-ext",
-    "package",
-] }
-
 [features]
 # default = ["gpu_profiling"]
 gpu_profiling = []

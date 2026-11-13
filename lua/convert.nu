@@ -7,17 +7,17 @@ def main [splats: string] {
   let controls = $splats
   | get splats
   | each {
-    let x = $in.pos.0 * $width - $width / 2. | math round -p 2
-    let y = $in.pos.1 * $height - $height / 2. | math round -p 2
-    let w = $in.size.0 * $width | math round -p 2
-    let h = $in.size.1 * $height | math round -p 2
-    let rot = $in.rot * (180. / 3.1415926535897932384626) | math round -p 2
+    let x = $in.pos.0 * $width - $width / 2.
+    let y = $in.pos.1 * $height - $height / 2.
+    let w = $in.size.0 * $width
+    let h = $in.size.1 * $height
+    let rot = $in.rot * (180. / 3.1415926535897932384626)
     let r = $in.color.0 / $in.color.3 * 255. | into int
     let g = $in.color.1 / $in.color.3 * 255. | into int
     let b = $in.color.2 / $in.color.3 * 255. | into int
     let a = $in.color.3 * 255. | into int
-    let sx = $in.scale.0 | math round -p 2
-    let sy = $in.scale.1 | math round -p 2
+    let sx = $in.scale.0
+    let sy = $in.scale.1
 
     $"{ ($x), ($y), ($w), ($h), ($rot), ($r), ($g), ($b), ($a), ($sx), ($sy) }"
   }

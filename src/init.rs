@@ -5,7 +5,7 @@
 use glam::{UVec2, Vec2, Vec4};
 use image::{ImageBuffer, Rgba};
 use petgraph::unionfind::UnionFind;
-use rand::{rngs::StdRng, RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::ir::{Ir, Splat};
 
@@ -38,7 +38,8 @@ pub fn init(
     let splats = points
         .iter()
         .map(|&p| {
-            let color = feather_mean(input, p.x, p.y, size * 0.5, FEATHER);
+            let color =
+                feather_mean(input, p.x, p.y, size * 0.5, FEATHER);
             Splat {
                 pos: Vec2::new(p.x, canvasf.y - p.y) / canvasf,
                 size: Vec2::splat(size) / canvasf,
@@ -77,7 +78,8 @@ fn sample_colors(
     max: usize,
 ) -> Vec<[f32; 3]> {
     let (w, h) = image.dimensions();
-    let stride = (((w * h) as f32 / max as f32).sqrt().ceil() as u32).max(1);
+    let stride =
+        (((w * h) as f32 / max as f32).sqrt().ceil() as u32).max(1);
     let mut out = Vec::new();
     for y in (0..h).step_by(stride as usize) {
         for x in (0..w).step_by(stride as usize) {
@@ -108,7 +110,8 @@ fn mean_shift(samples: &[[f32; 3]]) -> Vec<[f32; 3]> {
                 let (a, b, c) = cell(x, inv, g);
                 for da in a.saturating_sub(1)..=(a + 1).min(g - 1) {
                     for db in b.saturating_sub(1)..=(b + 1).min(g - 1) {
-                        for dc in c.saturating_sub(1)..=(c + 1).min(g - 1) {
+                        for dc in c.saturating_sub(1)..=(c + 1).min(g - 1)
+                        {
                             for &j in &grid[(da * g + db) * g + dc] {
                                 let q = samples[j];
                                 if dist2(x, q) <= h2 {
@@ -195,9 +198,12 @@ fn largest_cluster_mean(
 }
 
 fn cell(c: [f32; 3], inv: f32, g: usize) -> (usize, usize, usize) {
-    let a = ((c[0] * inv).floor() as isize).clamp(0, g as isize - 1) as usize;
-    let b = ((c[1] * inv).floor() as isize).clamp(0, g as isize - 1) as usize;
-    let c = ((c[2] * inv).floor() as isize).clamp(0, g as isize - 1) as usize;
+    let a =
+        ((c[0] * inv).floor() as isize).clamp(0, g as isize - 1) as usize;
+    let b =
+        ((c[1] * inv).floor() as isize).clamp(0, g as isize - 1) as usize;
+    let c =
+        ((c[2] * inv).floor() as isize).clamp(0, g as isize - 1) as usize;
     (a, b, c)
 }
 
@@ -217,11 +223,17 @@ fn no_gen_mask(image: &ImageBuffer<Rgba<f32>, Vec<f32>>) -> Vec<bool> {
     mask
 }
 
-fn blue_noise(dims: UVec2, no_gen: &[bool], n: usize, seed: u64) -> Vec<Vec2> {
+fn blue_noise(
+    dims: UVec2,
+    no_gen: &[bool],
+    n: usize,
+    seed: u64,
+) -> Vec<Vec2> {
     let w = dims.x as usize;
     let (wf, hf) = (dims.x as f32, dims.y as f32);
-    let allowed: Vec<u32> =
-        (0..no_gen.len() as u32).filter(|&i| no_gen[i as usize]).collect();
+    let allowed: Vec<u32> = (0..no_gen.len() as u32)
+        .filter(|&i| no_gen[i as usize])
+        .collect();
     if allowed.is_empty() {
         return Vec::new();
     }
@@ -235,7 +247,8 @@ fn blue_noise(dims: UVec2, no_gen: &[bool], n: usize, seed: u64) -> Vec<Vec2> {
         let mut best = Vec2::ZERO;
         let mut best_dist = -1.0f32;
         for _ in 0..CANDIDATES {
-            let idx = allowed[rng.random_range(0..allowed.len())] as usize;
+            let idx =
+                allowed[rng.random_range(0..allowed.len())] as usize;
             let p = Vec2::new(
                 (idx % w) as f32 + rng.random::<f32>(),
                 (idx / w) as f32 + rng.random::<f32>(),
@@ -259,14 +272,13 @@ fn blue_noise(dims: UVec2, no_gen: &[bool], n: usize, seed: u64) -> Vec<Vec2> {
                 best = p;
             }
         }
-        let idx =
-            (best.x / cell).floor() as i32 + (best.y / cell).floor() as i32 * gw;
+        let idx = (best.x / cell).floor() as i32
+            + (best.y / cell).floor() as i32 * gw;
         grid[idx as usize].push(best);
         points.push(best);
     }
     points
 }
-
 
 fn feather_mean(
     image: &ImageBuffer<Rgba<f32>, Vec<f32>>,
