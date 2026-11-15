@@ -782,7 +782,10 @@ impl<T: Pod + GpuLayout, U> BufferReader<T, U> {
 
         let mut result = None;
         self.try_resolve_read(|view, user_data| {
-            result = Some((*bytemuck::from_bytes::<T>(view), user_data))
+            result = Some((
+                bytemuck::pod_read_unaligned::<T>(&view[..T::SIZE as usize]),
+                user_data,
+            ))
         });
         result
     }
@@ -793,7 +796,9 @@ impl<T: Pod + GpuLayout, U> BufferReader<T, U> {
     {
         let mut result = None;
         self.read_blocking(gpu, |view| {
-            result = Some(*bytemuck::from_bytes::<T>(view))
+            result = Some(bytemuck::pod_read_unaligned::<T>(
+                &view[..T::SIZE as usize],
+            ))
         });
         result.unwrap()
     }

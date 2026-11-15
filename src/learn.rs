@@ -886,10 +886,11 @@ impl Learner {
             Vec::<Splat>::with_capacity(self.splat_count as usize);
 
         self.gpu.read_buffer(self.buffers.splats.clone(), |buffer| {
-            let splats: &[gpu_types::Splat] =
-                bytemuck::cast_slice(buffer);
-            for splat in splats {
-                let mut splat = *splat;
+            for i in 0..self.splat_count as usize {
+                let base = i * gpu_types::Splat::STRIDE as usize;
+                let end = base + gpu_types::Splat::SIZE as usize;
+                let mut splat: gpu_types::Splat =
+                    bytemuck::pod_read_unaligned(&buffer[base..end]);
                 splat.pos /= self.info.canvas.dimsf;
                 splat.size /= self.info.canvas.dimsf;
                 out.push(splat.into());
