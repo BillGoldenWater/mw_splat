@@ -10,7 +10,7 @@ use image::{ImageBuffer, Rgba};
 use mw_splat::{
     gpu::GpuContext,
     init::init,
-    learn::{Config, Learner, Lr, RunParams},
+    learn::{Config, Learner, Lr, RunConfig},
     utils::{init_env, load_premultiplied},
 };
 
@@ -213,14 +213,14 @@ fn evaluate(
             let mut learner =
                 Learner::new(gpu.clone(), image, config, &ir);
 
-            learner.run(RunParams {
+            learner.run(RunConfig {
                 seed: run as u64,
                 ..Default::default()
             });
             let first = learner.read_loss();
 
             if iters > 1 {
-                learner.run(RunParams {
+                learner.run(RunConfig {
                     iters: iters - 1,
                     redistribute,
                     seed: run as u64,
