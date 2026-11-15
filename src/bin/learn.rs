@@ -11,7 +11,7 @@ use mw_splat::{
     gpu::GpuContext,
     init::init,
     ir::Ir,
-    learn::Learner,
+    learn::{Learner, RunConfig},
     utils::{init_env, load_loss_weights, load_premultiplied},
 };
 
@@ -34,16 +34,24 @@ struct Cli {
     splats: usize,
 
     /// Iterations to fit for.
-    #[arg(short = 'I', long, default_value_t = 3000)]
+    #[arg(short = 'I', long, default_value_t = 2000)]
     iters: u32,
 
     /// Redistribute every this many iterations.
-    #[arg(short = 'r', long, default_value_t = 200)]
+    #[arg(short = 'r', long, default_value_t = 50)]
     redistribute: u32,
 
     /// Global learning-rate scale.
     #[arg(long, default_value_t = 1.0)]
     lr: f32,
+
+    /// Additional refinement iterations after the main fit (0 to skip).
+    #[arg(long, default_value_t = 2000)]
+    refine: u32,
+
+    /// End learning-rate for the refinement phase.
+    #[arg(long, default_value_t = 0.1)]
+    lr_refine_to: f32,
 
     /// Seed for intentionally random stuffs.
     #[arg(short = 'e', long, default_value_t = 0)]
@@ -69,7 +77,22 @@ fn main() -> Result<()> {
     if let Some(weights) = &cli.weights {
         learner.set_loss_weights(&load_loss_weights(weights)?);
     }
-    learner.run(cli.iters, cli.lr, Some(cli.redistribute), cli.seed);
+    learner.run(RunConfig {
+        iters: cli.iters,
+        lr_scale: cli.lr,
+        redistribute: Some(cli.redistribute),
+        seed: cli.seed,
+        ..Default::default()
+    });
+    if cli.refine != 0 {
+        learner.run(RunConfig {
+            iters: cli.refine,
+            lr_scale: cli.lr,
+            lr_anneal_to: Some(cli.lr_refine_to),
+            seed: cli.seed,
+            ..Default::default()
+        });
+    }
     ir.splats = learner.read_splats();
 
     std::fs::create_dir_all(&cli.output)?;

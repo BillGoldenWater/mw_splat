@@ -263,13 +263,14 @@ impl Learner {
         }
     }
 
-    pub fn run(
-        &mut self,
-        iters: u32,
-        lr_scale: f32,
-        redistribute: Option<u32>,
-        seed: u64,
-    ) {
+    pub fn run(&mut self, params: RunConfig) {
+        let RunConfig {
+            iters,
+            lr_scale,
+            redistribute,
+            seed,
+            lr_anneal_to: cosine_anneal,
+        } = params;
         assert!(iters >= 1);
 
         let mut iter_num = 0;
@@ -306,11 +307,20 @@ impl Learner {
                 it.log(&self.gpu, iter_num);
             }
 
+            let lr = match cosine_anneal {
+                Some(min) => {
+                    let t = iter_num as f32 / iters as f32;
+                    let c =
+                        0.5 * (1.0 + (std::f32::consts::PI * t).cos());
+                    lr_scale * (min + (1.0 - min) * c)
+                }
+                None => lr_scale,
+            };
             let avg_dur = Duration::from_secs_f64(avg_time);
             tracing::debug!(
-                "issuing iter: {iter_num}, lr: {lr_scale}, avg_time: {avg_dur:.2?}"
+                "issuing iter: {iter_num}, lr: {lr}, avg_time: {avg_dur:.2?}"
             );
-            let cmd = self.step(iter_num, lr_scale);
+            let cmd = self.step(iter_num, lr);
             let idx = self.gpu.submit([cmd]);
             pending.push_back(idx);
 
@@ -911,6 +921,27 @@ impl Default for Config {
         Self {
             lr_scale: 1.,
             lr: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RunConfig {
+    pub iters: u32,
+    pub lr_scale: f32,
+    pub lr_anneal_to: Option<f32>,
+    pub redistribute: Option<u32>,
+    pub seed: u64,
+}
+
+impl Default for RunConfig {
+    fn default() -> Self {
+        Self {
+            iters: 1,
+            lr_scale: 1.,
+            lr_anneal_to: None,
+            redistribute: None,
+            seed: 1,
         }
     }
 }

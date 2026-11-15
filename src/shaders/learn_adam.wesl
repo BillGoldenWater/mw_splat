@@ -28,8 +28,8 @@ struct Imm {
 }
 var<immediate> imm: Imm;
 
-const BETA1: f32 = 0.9;
-const BETA2: f32 = 0.999;
+const BETA1: f32 = 0.5;
+const BETA2: f32 = 0.95;
 const ADAM_EPS: f32 = 1e-8;
 const LN_SIZE_MAX: f32 = log(20000.);
 

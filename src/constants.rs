@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MPL-2.0
 
-pub const GPU_MAX_IN_FLIGHT: usize = 4;
+pub const GPU_MAX_IN_FLIGHT: usize = 10;
 
 pub const TILE_SIZE: u32 = 16;
 pub const WG_SIZE_2D: u32 = 16;

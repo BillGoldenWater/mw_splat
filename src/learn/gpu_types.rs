@@ -60,13 +60,14 @@ pub struct Lr {
 
 impl Default for Lr {
     fn default() -> Self {
+        // for 2k iters, 50 redistribute
         Self {
-            position: 0.7246497,
-            size: 0.025369959,
-            rotation: 0.0110587515,
-            color: 0.03130688,
-            alpha: 1.3482634,
-            scale: 0.0034468751,
+            position: 0.31874454,
+            size: 0.033444524,
+            rotation: 0.011405053,
+            color: 0.62412935,
+            alpha: 0.0011357757,
+            scale: 0.044140805,
         }
     }
 }

@@ -10,15 +10,15 @@ use image::{ImageBuffer, Rgba};
 use mw_splat::{
     gpu::GpuContext,
     init::init,
-    learn::{Config, Learner, Lr},
+    learn::{Config, Learner, Lr, RunParams},
     utils::{init_env, load_premultiplied},
 };
 
 const N_PARAMS: usize = 7;
 const DEFAULT_REDISTRIBUTE: f32 = 30.0;
 const EXPLODE_PENALTY: f32 = 1.0;
-const H: f32 = 0.25;
-const GD_STEP: f32 = 0.25;
+const H: f32 = 0.05;
+const GD_STEP: f32 = 1.;
 
 #[derive(Parser)]
 struct Cli {
@@ -72,6 +72,7 @@ fn main() -> Result<()> {
     let mut best = (f32::INFINITY, theta);
 
     for step in 0..cli.steps {
+        let gd_step = GD_STEP * 0.5f32.powi((step / 10) as i32);
         let f0 = evaluate(
             &gpu,
             &images,
@@ -105,7 +106,7 @@ fn main() -> Result<()> {
             grad[..n_params].iter().map(|g| g * g).sum::<f32>().sqrt();
         if norm > 0.0 {
             for i in 0..n_params {
-                theta[i] -= GD_STEP * grad[i] / norm;
+                theta[i] -= gd_step * grad[i] / norm;
             }
         }
         theta = clamp_theta(theta, iters, tune_redistribute);
@@ -212,11 +213,19 @@ fn evaluate(
             let mut learner =
                 Learner::new(gpu.clone(), image, config, &ir);
 
-            learner.run(1, 1.0, None, run as u64);
+            learner.run(RunParams {
+                seed: run as u64,
+                ..Default::default()
+            });
             let first = learner.read_loss();
 
             if iters > 1 {
-                learner.run(iters - 1, 1.0, redistribute, run as u64);
+                learner.run(RunParams {
+                    iters: iters - 1,
+                    redistribute,
+                    seed: run as u64,
+                    ..Default::default()
+                });
             }
             let loss = learner.read_loss();
 
