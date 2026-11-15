@@ -33,7 +33,8 @@ use wgpu::{
 
 use crate::{
     constants::{
-        GRAD_COPIES, INVERSE_CDF_SIZE, TILE_SIZE, WG_SIZE, WG_SIZE_2D,
+        FP_SCALE, GRAD_COPIES, INVERSE_CDF_SIZE, TILE_SIZE, WG_SIZE,
+        WG_SIZE_2D,
     },
     utils::copy_with_stride,
 };
@@ -43,6 +44,7 @@ pub struct GpuContext {
     device: Device,
     queue: Queue,
     shaders: Shaders,
+    atomic_f32: bool,
 }
 
 impl GpuContext {
@@ -68,10 +70,20 @@ impl GpuContext {
         ))
         .context("instance.request_adapter")?;
 
+        let have_atomic_f32 =
+            adapter.features().contains(Features::SHADER_FLOAT32_ATOMIC);
+
+        let atomic_f32 =
+            have_atomic_f32 && !cfg!(feature = "gpu_disable_atomic_f32");
+
         let features = Features::IMMEDIATES
             | Features::BUFFER_BINDING_ARRAY
             | Features::STORAGE_RESOURCE_BINDING_ARRAY
-            | Features::SHADER_FLOAT32_ATOMIC
+            | if atomic_f32 {
+                Features::SHADER_FLOAT32_ATOMIC
+            } else {
+                Default::default()
+            }
             | if cfg!(feature = "gpu_profiling") {
                 Features::TIMESTAMP_QUERY
                     | Features::TIMESTAMP_QUERY_INSIDE_PASSES
@@ -90,12 +102,13 @@ impl GpuContext {
         ))
         .context("adapter.request_device")?;
 
-        let shaders = Shaders::new(&device);
+        let shaders = Shaders::new(&device, atomic_f32);
 
         Ok(Self {
             device,
             queue,
             shaders,
+            atomic_f32,
         })
     }
 
@@ -270,6 +283,10 @@ impl GpuContext {
 
     pub fn shaders(&self) -> &Shaders {
         &self.shaders
+    }
+
+    pub fn atomic_f32(&self) -> bool {
+        self.atomic_f32
     }
 }
 
@@ -447,7 +464,7 @@ pub struct Shaders {
 }
 
 impl Shaders {
-    pub fn new(device: &Device) -> Self {
+    pub fn new(device: &Device, atomic_f32: bool) -> Self {
         const WESL_SRC: include_dir::Dir<'static> =
             include_dir::include_dir!("src/shaders/");
         fn fill_resolver(
@@ -474,8 +491,11 @@ impl Shaders {
             }
         }
 
+        let mut features = wesl::Features::new();
+        features.set("atomic_f32", atomic_f32);
         let options = CompileOptions {
             lower: true,
+            features,
             ..Default::default()
         };
         let mut resolver = VirtualResolver::new();
@@ -490,6 +510,8 @@ const WG_SIZE: u32 = {WG_SIZE}u;
 const TILE_SIZE: u32 = {TILE_SIZE}u;
 const GRAD_COPIES: u32 = {GRAD_COPIES}u;
 const INVERSE_CDF_SIZE: u32 = {INVERSE_CDF_SIZE}u;
+
+const FP_SCALE: f32 = {FP_SCALE:.1};
 "#
             )
             .into(),

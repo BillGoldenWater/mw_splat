@@ -15,6 +15,8 @@ pub const LOSS_WEIGHT_GAMMA: f32 = 1.4;
 
 // backward pass
 pub const GRAD_COPIES: u64 = 8;
+/// 2^28
+pub const FP_SCALE: f32 = 268435456.0;
 
 // redistribute pass
 /// inverse CDF slot count

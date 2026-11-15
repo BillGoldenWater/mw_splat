@@ -10,11 +10,12 @@ import package::libs::constants::{
     BWD_BLOCK_SIZE,
     BWD_WG_LEN,
     BWD_WG_SIZE,
+    FP_SCALE,
     GRAD_COPIES,
     TILE_SIZE
 };
 import package::libs::kernel::sample_full;
-import package::libs::learn::{Gradient, GradientAtomic};
+import package::libs::learn::{GradElem, Gradient, GradientAtomic, grad_scales};
 
 @group(0) @binding(0)
 var<storage, read> info: Info;
@@ -44,7 +45,7 @@ var<storage, read> loss_weights: array<f32>;
 @group(5) @binding(0)
 var<storage, read_write> grads: array<GradientAtomic>;
 @group(5) @binding(1)
-var<storage, read_write> loss: atomic<f32>;
+var<storage, read_write> loss: atomic<GradElem>;
 
 struct Px {
     composite: vec4f,
@@ -114,7 +115,10 @@ fn backward(
         workgroupBarrier();
     }
     if l_ii == 0u {
+        @if(atomic_f32)
         atomicAdd(&loss, workgroup_loss_buf[0]);
+        @else
+        atomicAdd(&loss, i32(round(workgroup_loss_buf[0] * FP_SCALE)));
     }
 
     let head = bin_heads[tile_idx];
@@ -174,17 +178,32 @@ fn backward(
 
         if touched {
             let grad = &grads[grad_base + splat_idx];
-            atomicAdd(&grad.x, grads_local.x);
-            atomicAdd(&grad.y, grads_local.y);
-            atomicAdd(&grad.w, grads_local.w);
-            atomicAdd(&grad.h, grads_local.h);
-            atomicAdd(&grad.rot, grads_local.rot);
-            atomicAdd(&grad.r, grads_local.r);
-            atomicAdd(&grad.g, grads_local.g);
-            atomicAdd(&grad.b, grads_local.b);
-            atomicAdd(&grad.a, grads_local.a);
-            atomicAdd(&grad.scale_x, grads_local.scale_x);
-            atomicAdd(&grad.scale_y, grads_local.scale_y);
+            @if(atomic_f32) {
+                atomicAdd(&grad.x, grads_local.x);
+                atomicAdd(&grad.y, grads_local.y);
+                atomicAdd(&grad.w, grads_local.w);
+                atomicAdd(&grad.h, grads_local.h);
+                atomicAdd(&grad.rot, grads_local.rot);
+                atomicAdd(&grad.r, grads_local.r);
+                atomicAdd(&grad.g, grads_local.g);
+                atomicAdd(&grad.b, grads_local.b);
+                atomicAdd(&grad.a, grads_local.a);
+                atomicAdd(&grad.scale_x, grads_local.scale_x);
+                atomicAdd(&grad.scale_y, grads_local.scale_y);
+            } @else {
+                let sc = grad_scales(splat, info.canvas.dims);
+                atomicAdd(&grad.x, i32(round(grads_local.x * sc.lin.x)));
+                atomicAdd(&grad.y, i32(round(grads_local.y * sc.lin.y)));
+                atomicAdd(&grad.w, i32(round(grads_local.w * sc.lin.x)));
+                atomicAdd(&grad.h, i32(round(grads_local.h * sc.lin.y)));
+                atomicAdd(&grad.rot, i32(round(grads_local.rot * sc.quad)));
+                atomicAdd(&grad.r, i32(round(grads_local.r * sc.quad)));
+                atomicAdd(&grad.g, i32(round(grads_local.g * sc.quad)));
+                atomicAdd(&grad.b, i32(round(grads_local.b * sc.quad)));
+                atomicAdd(&grad.a, i32(round(grads_local.a * sc.quad)));
+                atomicAdd(&grad.scale_x, i32(round(grads_local.scale_x * sc.scale_norm.x)));
+                atomicAdd(&grad.scale_y, i32(round(grads_local.scale_y * sc.scale_norm.y)));
+            }
         }
     }
 }

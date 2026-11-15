@@ -32,8 +32,8 @@ pub use self::gpu_types::Lr;
 use crate::learn::gpu_types::Timestamps;
 use crate::{
     constants::{
-        GPU_MAX_IN_FLIGHT, REF_HEIGHT, RFE_RAMP_CAP, TILE_SIZE, WG_SIZE,
-        WG_SIZE_2D,
+        FP_SCALE, GPU_MAX_IN_FLIGHT, REF_HEIGHT, RFE_RAMP_CAP, TILE_SIZE,
+        WG_SIZE, WG_SIZE_2D,
     },
     gpu::{BufferReader, GpuContext, GpuLayout},
     ir::{Ir, Splat},
@@ -890,7 +890,13 @@ impl Learner {
     }
 
     pub fn read_loss(&self) -> f32 {
-        self.gpu.read_buffer_pod(self.buffers.loss.clone())
+        if self.gpu.atomic_f32() {
+            self.gpu.read_buffer_pod::<f32>(self.buffers.loss.clone())
+        } else {
+            let fixed: i32 =
+                self.gpu.read_buffer_pod(self.buffers.loss.clone());
+            fixed as f32 / FP_SCALE
+        }
     }
 }
 

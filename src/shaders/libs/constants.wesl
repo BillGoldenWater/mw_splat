@@ -16,6 +16,7 @@ const BWD_BLOCK_LEN = BWD_BLOCK_SIZE * BWD_BLOCK_SIZE;
 const BWD_WG_SIZE = TILE_SIZE / BWD_BLOCK_SIZE;
 const BWD_WG_LEN = BWD_WG_SIZE * BWD_WG_SIZE;
 const GRAD_COPIES: u32 = package::_constants::GRAD_COPIES;
+const FP_SCALE: f32 = package::_constants::FP_SCALE;
 
 // redistribute pass
 const INVERSE_CDF_SIZE: u32 = package::_constants::INVERSE_CDF_SIZE;

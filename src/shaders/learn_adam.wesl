@@ -6,7 +6,7 @@
 
 import package::libs::types::{Info, Splat};
 import package::libs::constants::{GRAD_COPIES, LOGIT_EPS, WG_SIZE};
-import package::libs::learn::Gradient;
+import package::libs::learn::{Gradient, GradientBuf, grad_scales};
 
 @group(0) @binding(0)
 var<storage, read> info: Info;
@@ -16,7 +16,7 @@ var<storage, read> info: Info;
 var<storage, read_write> splats: array<Splat>;
 
 @group(2) @binding(0)
-var<storage, read> grads: array<Gradient>;
+var<storage, read> grads: array<GradientBuf>;
 
 @group(3) @binding(0)
 var<storage, read_write> moment1: array<Splat>;
@@ -143,19 +143,49 @@ fn splat_from_raw(raw: Splat) -> Splat {
 
 fn sum_grad(idx: u32, splat_count: u32) -> Gradient {
     var total: Gradient;
-    for(var copy_idx = 0u; copy_idx < GRAD_COPIES; copy_idx += 1u) {
-        let g = grads[splat_count * copy_idx + idx];
-        total.x += g.x;
-        total.y += g.y;
-        total.w += g.w;
-        total.h += g.h;
-        total.rot += g.rot;
-        total.r += g.r;
-        total.g += g.g;
-        total.b += g.b;
-        total.a += g.a;
-        total.scale_x += g.scale_x;
-        total.scale_y += g.scale_y;
+    @if(atomic_f32) {
+        for(var copy_idx = 0u; copy_idx < GRAD_COPIES; copy_idx += 1u) {
+            let g = grads[splat_count * copy_idx + idx];
+            total.x += g.x;
+            total.y += g.y;
+            total.w += g.w;
+            total.h += g.h;
+            total.rot += g.rot;
+            total.r += g.r;
+            total.g += g.g;
+            total.b += g.b;
+            total.a += g.a;
+            total.scale_x += g.scale_x;
+            total.scale_y += g.scale_y;
+        }
+    } @else {
+        for(var copy_idx = 0u; copy_idx < GRAD_COPIES; copy_idx += 1u) {
+            let g = grads[splat_count * copy_idx + idx];
+            total.x += f32(g.x);
+            total.y += f32(g.y);
+            total.w += f32(g.w);
+            total.h += f32(g.h);
+            total.rot += f32(g.rot);
+            total.r += f32(g.r);
+            total.g += f32(g.g);
+            total.b += f32(g.b);
+            total.a += f32(g.a);
+            total.scale_x += f32(g.scale_x);
+            total.scale_y += f32(g.scale_y);
+        }
+
+        let sc = grad_scales(splats[idx], info.canvas.dims);
+        total.x /= sc.lin.x;
+        total.y /= sc.lin.y;
+        total.w /= sc.lin.x;
+        total.h /= sc.lin.y;
+        total.rot /= sc.quad;
+        total.r /= sc.quad;
+        total.g /= sc.quad;
+        total.b /= sc.quad;
+        total.a /= sc.quad;
+        total.scale_x /= sc.scale_norm.x;
+        total.scale_y /= sc.scale_norm.y;
     }
     return total;
 }

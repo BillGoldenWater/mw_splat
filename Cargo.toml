@@ -36,4 +36,5 @@ wgpu = "30.0.1"
 [features]
 # default = ["gpu_profiling"]
 gpu_profiling = []
+gpu_disable_atomic_f32 = []
 ir_pretty = []
