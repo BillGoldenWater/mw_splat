@@ -24,11 +24,11 @@ use wgpu::{
     BufferBindingType, BufferDescriptor, BufferSize, BufferUsages,
     CommandBuffer, CommandEncoder, CommandEncoderDescriptor,
     ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor,
-    Features, MapMode, PipelineCompilationOptions, PipelineLayout,
-    PipelineLayoutDescriptor, PollType, QuerySet, QuerySetDescriptor,
-    Queue, QueueWriteBufferView, ShaderModule, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, SubmissionIndex, Texture,
-    TextureDescriptor,
+    Features, InstanceDescriptor, MapMode, PipelineCompilationOptions,
+    PipelineLayout, PipelineLayoutDescriptor, PollType, QuerySet,
+    QuerySetDescriptor, Queue, QueueWriteBufferView, ShaderModule,
+    ShaderModuleDescriptor, ShaderSource, ShaderStages, SubmissionIndex,
+    Texture, TextureDescriptor,
 };
 
 use crate::{
@@ -47,38 +47,26 @@ pub struct GpuContext {
 
 impl GpuContext {
     pub fn new() -> Result<Self> {
-        let instance = wgpu::Instance::default();
-        let adapters = pollster::block_on(
-            instance.enumerate_adapters(Backends::all()),
+        let instance = wgpu::Instance::new(
+            InstanceDescriptor {
+                backends: Backends::VULKAN | Backends::METAL,
+                flags: Default::default(),
+                memory_budget_thresholds: Default::default(),
+                backend_options: Default::default(),
+                display: Default::default(),
+            }
+            .with_env(),
         );
 
-        if std::env::var("WGPU_LIST_ADAPTER").is_ok_and(|it| it == "true")
-        {
-            for adapter in &adapters {
-                tracing::info!("{:?}", adapter.get_info());
-            }
-        }
-
-        let adapter = std::env::var("WGPU_BACKEND")
-            .ok()
-            .and_then(|name| {
-                adapters
-                    .into_iter()
-                    .find(|it| it.get_info().backend.to_str() == name)
-            })
-            .map(Ok)
-            .unwrap_or_else(|| {
-                pollster::block_on(instance.request_adapter(
-                    &wgpu::RequestAdapterOptionsBase {
-                        power_preference:
-                            wgpu::PowerPreference::HighPerformance,
-                        force_fallback_adapter: false,
-                        compatible_surface: None,
-                        apply_limit_buckets: false,
-                    },
-                ))
-                .context("instance.request_adapter")
-            })?;
+        let adapter = pollster::block_on(instance.request_adapter(
+            &wgpu::RequestAdapterOptionsBase {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+                apply_limit_buckets: false,
+            },
+        ))
+        .context("instance.request_adapter")?;
 
         let features = Features::IMMEDIATES
             | Features::BUFFER_BINDING_ARRAY
