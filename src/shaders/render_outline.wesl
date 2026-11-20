@@ -43,7 +43,7 @@ fn vs_main(@builtin(vertex_index) v_i: u32, @builtin(instance_index) i_i: u32) -
 
     let pos = (world / info.canvas.dimsf * 2. - 1.) * vec2f(1., -1.);
 
-    let depth = f32(i_i) / f32(arrayLength(&splats));
+    let depth = f32(i_i) / f32(info.splats_length);
     let hsv = vec3f(depth * 0.8, 1., 1.);
     let color = vec4f(hsv2rgb(hsv), 1.);
 

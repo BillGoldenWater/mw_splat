@@ -8,6 +8,7 @@ struct Info {
     canvas: Canvas,
     tile_dims: vec2u,
     lr: Lr,
+    splats_length: u32,
 }
 
 struct Canvas {

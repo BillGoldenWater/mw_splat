@@ -11,11 +11,6 @@ use std::{
 use bytemuck::bytes_of;
 use glam::{UVec2, UVec3, UVec4, Vec4};
 use image::{ImageBuffer, Luma, Rgba};
-use rand::{Rng, SeedableRng};
-#[cfg(feature = "gpu_profiling")]
-use wgpu::{
-    Buffer, BufferUsages, QuerySet, QuerySetDescriptor, QueryType,
-};
 use wgpu::{
     ColorTargetState, ColorWrites, CommandBuffer, CommandEncoder,
     CommandEncoderDescriptor, ComputePassDescriptor, FragmentState,
@@ -28,14 +23,12 @@ use wgpu::{
 };
 
 pub use self::gpu_types::Lr;
-#[cfg(feature = "gpu_profiling")]
-use crate::learn::gpu_types::Timestamps;
 use crate::{
     constants::{
-        FP_SCALE, GPU_MAX_IN_FLIGHT, REF_HEIGHT, RFE_RAMP_CAP, TILE_SIZE,
-        WG_SIZE, WG_SIZE_2D,
+        GPU_MAX_IN_FLIGHT, REF_HEIGHT, RFE_RAMP_CAP, TILE_SIZE, WG_SIZE,
+        WG_SIZE_2D,
     },
-    gpu::{BufferReader, GpuContext, GpuLayout},
+    gpu::{BufferReader, GpuContext, GpuLayout, Profiling},
     ir::{Ir, Splat},
     learn::{
         bind_groups::BindGroups,
@@ -43,9 +36,10 @@ use crate::{
         gpu_types::{
             BinOverflow, ImmAdam, ImmBinAlloc, ImmRedistributeCells,
             ImmRedistributeMove, ImmRedistributeSelect,
-            ImmRedistributeSort, STRIDE_SAMPLING_CELL,
+            ImmRedistributeSort, STRIDE_SAMPLING_CELL, Timestamps,
         },
         pipelines::Pipelines,
+        scheduler::{RedistributeStep, Scheduler},
     },
     learn_dispatch, learn_write_ts,
     utils::image_ext::ImageBufferExt as _,
@@ -55,6 +49,7 @@ mod bind_groups;
 mod buffers;
 mod gpu_types;
 mod pipelines;
+pub mod scheduler;
 
 pub struct Learner {
     pub gpu: GpuContext,
@@ -62,6 +57,7 @@ pub struct Learner {
 
     pub info: gpu_types::Info,
     pub splat_count: u32,
+    pub splat_capacity: u32,
 
     pub pipelines: Pipelines,
 
@@ -70,12 +66,7 @@ pub struct Learner {
 
     pub bin_overflow_reader: BufferReader<BinOverflow, ()>,
 
-    #[cfg(feature = "gpu_profiling")]
-    pub timestamp_query_set: QuerySet,
-    #[cfg(feature = "gpu_profiling")]
-    pub timestamp_buffer: Buffer,
-    #[cfg(feature = "gpu_profiling")]
-    pub timestamp_reader: BufferReader<Timestamps, u32>,
+    pub profiling: Option<Profiling<Timestamps, u32>>,
 }
 
 impl Learner {
@@ -87,6 +78,7 @@ impl Learner {
     ) -> Self {
         let canvas = UVec2::from(reference.dimensions());
         let splat_count = ir.splats.len() as u64;
+        let splat_capacity = splat_count.max(1);
 
         let info = gpu_types::Info {
             canvas: gpu_types::Canvas {
@@ -102,13 +94,13 @@ impl Learner {
             },
             tile_dims: canvas.map(|it| it.div_ceil(TILE_SIZE)),
             lr: config.lr,
+            splats_length: u32::try_from(splat_count).unwrap(),
+            _pad: Default::default(),
         };
 
         let pipelines = Pipelines::new(&gpu);
-        let buffers = Buffers::new(&gpu, &info, splat_count, 1 << 18);
+        let buffers = Buffers::new(&gpu, &info, splat_capacity, 1 << 18);
         let bind_groups = BindGroups::new(&gpu, &pipelines, &buffers);
-
-        gpu.write_buffer(&buffers.info, 0, bytes_of(&info));
 
         // reference
         gpu.buffer_write_image(
@@ -120,9 +112,10 @@ impl Learner {
 
         // splats
         {
-            let size = buffers.splats.size().try_into().unwrap();
-            let mut write_view =
-                gpu.write_buffer_with(&buffers.splats, 0, size).unwrap();
+            let size = buffers.splat.splats.size().try_into().unwrap();
+            let mut write_view = gpu
+                .write_buffer_with(&buffers.splat.splats, 0, size)
+                .unwrap();
 
             let splat_stride = gpu_types::Splat::STRIDE as usize;
             let splat_size = gpu_types::Splat::SIZE as usize;
@@ -140,40 +133,24 @@ impl Learner {
         let bin_overflow_reader =
             gpu.buffer_reader(buffers.bin_overflow.clone());
 
-        #[cfg(feature = "gpu_profiling")]
-        let timestamp_query_set =
-            gpu.create_query_set(&QuerySetDescriptor {
-                label: Some("learner ts query set"),
-                ty: QueryType::Timestamp,
-                count: Timestamps::COUNT,
-            });
-        #[cfg(feature = "gpu_profiling")]
-        let timestamp_buffer = gpu.create_buffer(
-            "learner ts",
-            Timestamps::STRIDE,
-            BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
-        );
-        #[cfg(feature = "gpu_profiling")]
-        let timestamp_reader =
-            gpu.buffer_reader(timestamp_buffer.clone());
+        let profiling = Profiling::new(&gpu);
 
+        let splat_count = u32::try_from(splat_count).unwrap();
+        let splat_capacity = u32::try_from(splat_capacity).unwrap();
         let this = Self {
             gpu,
             config,
             info,
-            splat_count: u32::try_from(splat_count).unwrap(),
+            splat_count,
+            splat_capacity,
             pipelines,
             buffers,
             bind_groups,
             bin_overflow_reader,
-            #[cfg(feature = "gpu_profiling")]
-            timestamp_query_set,
-            #[cfg(feature = "gpu_profiling")]
-            timestamp_buffer,
-            #[cfg(feature = "gpu_profiling")]
-            timestamp_reader,
+            profiling,
         };
 
+        this.sync_info();
         this.reset_overflow();
 
         let ones = ImageBuffer::from_pixel(
@@ -182,9 +159,6 @@ impl Learner {
             Luma([1.0]),
         );
         this.set_loss_weights(&ones);
-
-        this.gpu.queue().submit([]);
-        this.gpu.poll_blocking();
 
         this
     }
@@ -212,11 +186,17 @@ impl Learner {
         );
     }
 
-    pub fn reset_overflow(&self) {
-        let splats_wg_num = self.splat_count.div_ceil(WG_SIZE);
+    pub fn sync_info(&self) {
+        self.gpu.write_buffer(
+            &self.buffers.info,
+            0,
+            bytes_of(&self.info),
+        );
+    }
 
-        let splats_wg = self.spread_workgroup_to_x_y(splats_wg_num);
-        let bin_fill_wg = self.spread_workgroup_to_x_y(self.splat_count);
+    pub fn reset_overflow(&self) {
+        let splats_wg = self.splat_wg_num(WG_SIZE);
+        let bin_fill_wg = self.splat_wg_num(1);
         let bin_num = self.info.tile_dims.element_product();
         let bin_sort_wg = self.spread_workgroup_to_x_y(bin_num);
 
@@ -263,20 +243,16 @@ impl Learner {
         }
     }
 
-    pub fn run(&mut self, params: RunConfig) {
-        let RunConfig {
-            iters,
-            lr_scale,
-            redistribute,
-            seed,
-            lr_anneal_to: cosine_anneal,
-        } = params;
-        assert!(iters >= 1);
+    pub fn splat_wg_num(&self, splats_per_wg: u32) -> UVec4 {
+        self.spread_workgroup_to_x_y(
+            self.splat_count.div_ceil(splats_per_wg).max(1),
+        )
+    }
 
+    pub fn run(&mut self, scheduler: impl Scheduler) {
         let mut iter_num = 0;
         let mut pending = VecDeque::<SubmissionIndex>::new();
         let mut avg_time = 0.;
-        let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
 
         loop {
             macro_rules! ensure_no_overflow {
@@ -300,88 +276,49 @@ impl Learner {
                 iter_num = it.iter_num;
                 self.grow_bin_data();
             }
-            #[cfg(feature = "gpu_profiling")]
-            if let Some((it, iter_num)) =
-                self.timestamp_reader.try_resolve_read_pod()
+            if let Some((timestamps, iter_num)) = self
+                .profiling
+                .as_mut()
+                .and_then(|profiling| profiling.try_read())
             {
-                it.log(&self.gpu, iter_num);
+                timestamps.log(&self.gpu, iter_num);
             }
 
-            let lr = match cosine_anneal {
-                Some(min) => {
-                    let t = iter_num as f32 / iters as f32;
-                    let c =
-                        0.5 * (1.0 + (std::f32::consts::PI * t).cos());
-                    lr_scale * (min + (1.0 - min) * c)
-                }
-                None => lr_scale,
+            let Some(schedule) = scheduler.step(self, iter_num) else {
+                ensure_no_overflow!();
+                break;
             };
+
             let avg_dur = Duration::from_secs_f64(avg_time);
             tracing::debug!(
-                "issuing iter: {iter_num}, lr: {lr}, avg_time: {avg_dur:.2?}"
+                "issuing iter: {iter_num}, lr: {lr}, avg_time: {avg_dur:.2?}",
+                lr = schedule.lr_scale
             );
-            let cmd = self.step(iter_num, lr);
+            let cmd = self.step(iter_num, schedule.lr_scale);
             let idx = self.gpu.submit([cmd]);
             pending.push_back(idx);
 
-            if let Some(redistribute) = redistribute
-                && redistribute > 0
-                && iter_num != iters
-                && iter_num.is_multiple_of(redistribute)
-            {
+            if let Some(redistribute) = schedule.redistribute {
                 ensure_no_overflow!();
-
-                let progress = iter_num as f32 / iters as f32;
-                let canvas = self.info.canvas.dims;
-                let splats = u64::from(self.splat_count);
-
-                let spacing = (canvas.element_product() as f32
-                    / splats.max(1) as f32)
-                    .sqrt();
-
-                let cell_size = (spacing
-                    * 2f32.powf(1.0 - 3.0 * progress))
-                .max(1.0) as u32;
-                let cell_count = canvas
-                    .map(|it| it.div_ceil(cell_size))
-                    .element_product();
-
-                let splat_size = spacing * 0.9;
-
-                let quantile = 0.5 * 2f32.powf(-3.0 * progress);
-                let move_count =
-                    (quantile * cell_count as f32).max(1.0) as u32;
-
-                let seed = rng.next_u32();
-
-                self.run_redistribute(
-                    cell_size, move_count, splat_size, seed,
-                );
                 pending.clear();
+
+                self.run_redistribute(redistribute);
             }
 
             if pending.len() >= GPU_MAX_IN_FLIGHT {
-                while pending.len() >= (GPU_MAX_IN_FLIGHT / 2) {
-                    let start = Instant::now();
-                    self.gpu
-                        .device()
-                        .poll(PollType::Wait {
-                            submission_index: pending.pop_front(),
-                            timeout: None,
-                        })
-                        .unwrap();
-                    avg_time += start.elapsed().as_secs_f64();
-                    avg_time /= 2.;
-                }
+                let start = Instant::now();
+                self.gpu
+                    .device()
+                    .poll(PollType::Wait {
+                        submission_index: pending.pop_front(),
+                        timeout: None,
+                    })
+                    .unwrap();
+                avg_time += start.elapsed().as_secs_f64();
+                avg_time /= 2.;
             }
 
             iter_num += 1;
-
-            if iter_num == iters {
-                ensure_no_overflow!();
-
-                break;
-            }
         }
     }
 
@@ -398,11 +335,7 @@ impl Learner {
 
         self.step_render(&mut encoder, iter_num);
 
-        let buffers_to_clear =
-            [&self.buffers.gradients, &self.buffers.loss];
-        for buffer in buffers_to_clear {
-            encoder.clear_buffer(buffer, 0, None);
-        }
+        encoder.clear_buffer(&self.buffers.splat.gradients, 0, None);
 
         let mut pass =
             encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -414,16 +347,16 @@ impl Learner {
             pass, self;
             learn_backward@i(i_learn_backward): {
                 0 = base_ro;
-                1 = splats_ro;
+                1 = splat.splats_ro;
                 2 = bin_heads_ro;
                 3 = bin_data_ro;
                 4 = canvas_ro;
-                5 = learn_backward;
+                5 = splat.learn_backward;
             },
             learn_adam@i(i_learn_adam)(&ImmAdam { lr_scale }): {
-                1 = splats_adam;
-                2 = learn_gradients_ro;
-                3 = adam_rw;
+                1 = splat.splats_adam;
+                2 = splat.learn_gradients_ro;
+                3 = splat.adam_rw;
             },
         };
 
@@ -431,17 +364,9 @@ impl Learner {
 
         self.bin_overflow_reader.try_initiate_read(&mut encoder, ());
 
-        #[cfg(feature = "gpu_profiling")]
-        {
-            encoder.resolve_query_set(
-                &self.timestamp_query_set,
-                0..Timestamps::COUNT,
-                &self.timestamp_buffer,
-                0,
-            );
-            self.timestamp_reader
-                .try_initiate_read(&mut encoder, iter_num);
-        };
+        if let Some(profiling) = &mut self.profiling {
+            profiling.begin_read(&mut encoder, iter_num);
+        }
 
         encoder.finish()
     }
@@ -496,14 +421,14 @@ impl Learner {
             1,
         );
 
-        let splats_wg = self.spread_workgroup_to_x_y(self.splat_count);
+        let splats_wg = self.splat_wg_num(1);
 
         learn_write_ts!(pass, self, begin);
         learn_dispatch! {
             pass, self;
             bin_count@n(splats_wg): {
                 0 = base_ro;
-                1 = splats_ro;
+                1 = splat.splats_ro;
                 2 = bin_count;
             },
             bin_alloc@n(bin_wg_num)(&ImmBinAlloc { iter_num }): {
@@ -519,10 +444,10 @@ impl Learner {
                 3 = bin_data_rw;
             },
             splats_cache_fill@i(i_splats_cache_fill): {
-                1 = splats_cache_fill;
+                1 = splat.splats_cache_fill;
             },
             render@i(i_render): {
-                1 = splats_ro;
+                1 = splat.splats_ro;
                 2 = bin_heads_ro;
                 3 = bin_data_ro;
                 4 = canvas_rw;
@@ -532,22 +457,16 @@ impl Learner {
         drop(pass);
     }
 
-    pub fn run_redistribute(
-        &mut self,
-        cell_size: u32,
-        move_count: u32,
-        splat_size: f32,
-        seed: u32,
-    ) {
+    pub fn run_redistribute(&mut self, step: RedistributeStep) {
         self.run_render();
 
         let cell_count = self
             .info
             .canvas
             .dims
-            .map(|it| it.div_ceil(cell_size))
+            .map(|it| it.div_ceil(step.cell_size))
             .element_product() as u64;
-        self.reserve_sampling_cells(cell_count);
+        self.ensure_sampling_cells(cell_count);
 
         let mut encoder = self.gpu.device().create_command_encoder(
             &CommandEncoderDescriptor {
@@ -557,14 +476,13 @@ impl Learner {
 
         self.step_redistribute(
             &mut encoder,
-            cell_size,
-            move_count,
-            splat_size,
-            seed,
+            step.cell_size,
+            step.move_count,
+            step.splat_size,
+            step.seed,
         );
 
         self.gpu.submit([encoder.finish()]);
-        self.gpu.poll_blocking();
     }
 
     pub fn step_redistribute(
@@ -602,8 +520,7 @@ impl Learner {
                 timestamp_writes: None,
             });
 
-        let splats_wg = self
-            .spread_workgroup_to_x_y(self.splat_count.div_ceil(WG_SIZE));
+        let splats_wg = self.splat_wg_num(WG_SIZE);
         let cells_wg =
             grid_dims.map(|it| it.div_ceil(WG_SIZE_2D)).extend(1);
 
@@ -618,9 +535,9 @@ impl Learner {
                 1 = redistribute_select;
             },
             redistribute_move@n(splats_wg)(&imm_move): {
-                1 = splats_redistribute;
+                1 = splat.splats_redistribute;
                 2 = redistribute_move;
-                3 = adam_rw;
+                3 = splat.adam_rw;
             },
         };
 
@@ -636,12 +553,13 @@ impl Learner {
         pass: &mut wgpu::ComputePass<'_>,
     ) {
         pass.set_pipeline(&self.pipelines.redistribute_sort);
+        pass.set_bind_group(0, &self.bind_groups.base_ro, &[]);
         pass.set_bind_group(
             1,
-            &self.bind_groups.splats_redistribute,
+            &self.bind_groups.splat.splats_redistribute,
             &[],
         );
-        pass.set_bind_group(2, &self.bind_groups.adam_rw, &[]);
+        pass.set_bind_group(2, &self.bind_groups.splat.adam_rw, &[]);
 
         let n = self.splat_count.next_power_of_two();
         let sort_wg =
@@ -665,23 +583,51 @@ impl Learner {
         learn_write_ts!(pass, self, redistribute_sort);
     }
 
-    pub fn reserve_sampling_cells(&mut self, cell_count: u64) {
-        let current_size =
-            self.buffers.redistribute_sampling_cells.size();
-        let current_cap = current_size / STRIDE_SAMPLING_CELL;
+    pub fn ensure_sampling_cells(&mut self, cell_count: u64) {
+        let current_cap = self.buffers.redistribute_sampling_cells.size()
+            / STRIDE_SAMPLING_CELL;
+        let mut cap = current_cap.max(1);
 
-        if current_cap < cell_count {
-            self.buffers.grow_sampling_cells(&self.gpu, cell_count);
-            self.bind_groups.recreate_sampling_cells(
-                &self.gpu,
-                &self.pipelines,
-                &self.buffers,
-            );
+        while cap < cell_count {
+            cap = cap.saturating_mul(2);
         }
+
+        if cap == current_cap {
+            return;
+        }
+
+        self.buffers.realloc_sampling_cells(&self.gpu, cap);
+        self.bind_groups.recreate_sampling_cells(
+            &self.gpu,
+            &self.pipelines,
+            &self.buffers,
+        );
+    }
+
+    pub fn ensure_splat_capacity(&mut self, n: u32) {
+        let mut cap = self.splat_capacity.max(1);
+
+        while cap < n {
+            cap = cap.saturating_mul(2);
+        }
+
+        if cap == self.splat_capacity {
+            return;
+        }
+
+        self.buffers.realloc_splats(&self.gpu, u64::from(cap));
+        self.bind_groups.recreate_splats(
+            &self.gpu,
+            &self.pipelines,
+            &self.buffers,
+        );
+        self.splat_capacity = cap;
     }
 
     pub fn grow_bin_data(&mut self) {
-        self.buffers.grow_bin_data(&self.gpu);
+        let new_cap =
+            self.buffers.bin_data.size().div_ceil(u32::STRIDE) * 2;
+        self.buffers.realloc_bin_data(&self.gpu, new_cap);
         self.bind_groups.recreate_bin_data(
             &self.gpu,
             &self.pipelines,
@@ -784,7 +730,7 @@ impl Learner {
         let splats_bind_group = self
             .gpu
             .bindgroup("render outline splats", &splats_layout)
-            .push_entry_buffer(&self.buffers.splats)
+            .push_entry_buffer(&self.buffers.splat.splats)
             .build();
 
         let mut encoder =
@@ -885,7 +831,8 @@ impl Learner {
         let mut out =
             Vec::<Splat>::with_capacity(self.splat_count as usize);
 
-        self.gpu.read_buffer(self.buffers.splats.clone(), |buffer| {
+        let splats = self.buffers.splat.splats.clone();
+        self.gpu.read_buffer(splats, |buffer| {
             for i in 0..self.splat_count as usize {
                 let base = i * gpu_types::Splat::STRIDE as usize;
                 let end = base + gpu_types::Splat::SIZE as usize;
@@ -901,50 +848,24 @@ impl Learner {
     }
 
     pub fn read_loss(&self) -> f32 {
-        if self.gpu.atomic_f32() {
-            self.gpu.read_buffer_pod::<f32>(self.buffers.loss.clone())
-        } else {
-            let fixed: i32 =
-                self.gpu.read_buffer_pod(self.buffers.loss.clone());
-            fixed as f32 / FP_SCALE
-        }
+        let mut total = 0.0;
+        self.gpu
+            .read_buffer(self.buffers.tile_loss.clone(), |buffer| {
+                total =
+                    bytemuck::cast_slice::<u8, f32>(buffer).iter().sum();
+            });
+        total
+    }
+
+    /// only correct of not weighted
+    pub fn read_psnr(&self) -> f32 {
+        self.read_loss().log10() * -10.
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Config {
-    pub lr_scale: f32,
     pub lr: Lr,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            lr_scale: 1.,
-            lr: Default::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RunConfig {
-    pub iters: u32,
-    pub lr_scale: f32,
-    pub lr_anneal_to: Option<f32>,
-    pub redistribute: Option<u32>,
-    pub seed: u64,
-}
-
-impl Default for RunConfig {
-    fn default() -> Self {
-        Self {
-            iters: 1,
-            lr_scale: 1.,
-            lr_anneal_to: None,
-            redistribute: None,
-            seed: 1,
-        }
-    }
 }
 
 #[macro_export]
@@ -953,13 +874,13 @@ macro_rules! learn_dispatch {
         $pass:expr, $self:expr;
         $(
             $pipeline:ident$(@i($indirect_field:ident))?$(@n($workgroups:expr))?$(($imm:expr))?:
-            { $($bg_idx:literal = $bg_ident:ident);* $(;)? }
+            { $($bg_idx:literal = $($bg_path:ident).+);* $(;)? }
         ),* $(,)?
     ) => {
         $(
             $pass.set_pipeline(&$self.pipelines.$pipeline);
             $(
-                $pass.set_bind_group($bg_idx, &$self.bind_groups.$bg_ident, &[]);
+                $pass.set_bind_group($bg_idx, &$self.bind_groups.$($bg_path).+, &[]);
             )*
             $(
                 $pass.set_immediates(0, bytes_of($imm));
@@ -985,10 +906,12 @@ macro_rules! learn_dispatch {
 #[macro_export]
 macro_rules! learn_write_ts {
     ($pass:expr, $self:expr, $name:ident) => {
-        #[cfg(feature = "gpu_profiling")]
-        $pass.write_timestamp(
-            &$self.timestamp_query_set,
-            (offset_of!(Timestamps, $name) as u64 / u64::STRIDE) as u32,
-        );
+        if let Some(profiling) = &$self.profiling {
+            $pass.write_timestamp(
+                &profiling.query_set,
+                (offset_of!(Timestamps, $name) as u64 / u64::STRIDE)
+                    as u32,
+            );
+        }
     };
 }

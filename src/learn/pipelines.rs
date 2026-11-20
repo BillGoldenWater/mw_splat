@@ -32,7 +32,7 @@ pub struct Pipelines {
     pub layout_bin_data_ro: BindGroupLayout,
     pub layout_bin_data_rw: BindGroupLayout,
 
-    // pixels, transmittance
+    // pixels, log transmittance
     pub layout_canvas_ro: BindGroupLayout,
     pub layout_canvas_rw: BindGroupLayout,
 
@@ -285,7 +285,7 @@ impl Pipelines {
             );
         let redistribute_sort = gpu
             .pipeline_layout("redistribute_sort")
-            .push_bind_group_layout(None)
+            .push_bind_group_layout(Some(&layout_base_ro))
             .push_bind_group_layout(Some(&layout_splats_redistribute))
             .push_bind_group_layout(Some(&layout_adam_rw))
             .with_immediate_size(ImmRedistributeSort::SIZE as _)

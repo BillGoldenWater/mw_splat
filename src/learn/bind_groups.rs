@@ -12,10 +12,7 @@ use crate::{
 pub struct BindGroups {
     pub base_ro: BindGroup,
 
-    pub splats_ro: BindGroup,
-    pub splats_adam: BindGroup,
-    pub splats_redistribute: BindGroup,
-    pub splats_cache_fill: BindGroup,
+    pub splat: SplatBindGroups,
 
     pub bin_count: BindGroup,
     pub bin_alloc: BindGroup,
@@ -29,11 +26,6 @@ pub struct BindGroups {
 
     pub canvas_ro: BindGroup,
     pub canvas_rw: BindGroup,
-
-    pub learn_backward: BindGroup,
-    pub learn_gradients_ro: BindGroup,
-
-    pub adam_rw: BindGroup,
 
     pub redistribute_cells: BindGroup,
     pub redistribute_select: BindGroup,
@@ -52,30 +44,8 @@ impl BindGroups {
             .push_entry_buffer(&buffers.reference)
             .build();
 
-        let splats_ro = gpu
-            .bindgroup("splats_ro", &pipelines.layout_splats_ro)
-            .push_entry_buffer(&buffers.splats)
-            .push_entry_buffer(&buffers.splat_caches)
-            .build();
-        let splats_adam = gpu
-            .bindgroup("splats_adam", &pipelines.layout_splats_adam)
-            .push_entry_buffer(&buffers.splats)
-            .build();
-        let splats_redistribute = gpu
-            .bindgroup(
-                "splats_redistribute",
-                &pipelines.layout_splats_redistribute,
-            )
-            .push_entry_buffer(&buffers.splats)
-            .build();
-        let splats_cache_fill = gpu
-            .bindgroup(
-                "splats_cache_fill",
-                &pipelines.layout_splats_cache_fill,
-            )
-            .push_entry_buffer(&buffers.splats)
-            .push_entry_buffer(&buffers.splat_caches)
-            .build();
+        let splat =
+            Self::create_splat_bind_groups(gpu, pipelines, buffers);
 
         let bin_count = gpu
             .bindgroup("bin_count", &pipelines.layout_bin_count)
@@ -109,32 +79,13 @@ impl BindGroups {
         let canvas_ro = gpu
             .bindgroup("canvas_ro", &pipelines.layout_canvas_ro)
             .push_entry_buffer(&buffers.pixels)
-            .push_entry_buffer(&buffers.transmittance)
+            .push_entry_buffer(&buffers.log_transmittance)
             .push_entry_buffer(&buffers.loss_weights)
             .build();
         let canvas_rw = gpu
             .bindgroup("canvas_rw", &pipelines.layout_canvas_rw)
             .push_entry_buffer(&buffers.pixels)
-            .push_entry_buffer(&buffers.transmittance)
-            .build();
-
-        let learn_backward = gpu
-            .bindgroup("learn_backward", &pipelines.layout_learn_backward)
-            .push_entry_buffer(&buffers.gradients)
-            .push_entry_buffer(&buffers.loss)
-            .build();
-        let learn_gradients_ro = gpu
-            .bindgroup(
-                "learn_gradients_ro",
-                &pipelines.layout_learn_gradients_ro,
-            )
-            .push_entry_buffer(&buffers.gradients)
-            .build();
-
-        let adam_rw = gpu
-            .bindgroup("adam_rw", &pipelines.layout_adam_rw)
-            .push_entry_buffer(&buffers.adam_moment1)
-            .push_entry_buffer(&buffers.adam_moment2)
+            .push_entry_buffer(&buffers.log_transmittance)
             .build();
 
         let (redistribute_cells, redistribute_select, redistribute_move) =
@@ -142,10 +93,7 @@ impl BindGroups {
 
         Self {
             base_ro,
-            splats_ro,
-            splats_adam,
-            splats_redistribute,
-            splats_cache_fill,
+            splat,
             bin_count,
             bin_alloc,
             bin_fill,
@@ -155,13 +103,78 @@ impl BindGroups {
             bin_data_rw,
             canvas_ro,
             canvas_rw,
-            learn_backward,
-            learn_gradients_ro,
-            adam_rw,
             redistribute_cells,
             redistribute_select,
             redistribute_move,
         }
+    }
+
+    pub fn create_splat_bind_groups(
+        gpu: &GpuContext,
+        pipelines: &Pipelines,
+        buffers: &Buffers,
+    ) -> SplatBindGroups {
+        let splats_ro = gpu
+            .bindgroup("splats_ro", &pipelines.layout_splats_ro)
+            .push_entry_buffer(&buffers.splat.splats)
+            .push_entry_buffer(&buffers.splat.splat_caches)
+            .build();
+        let splats_adam = gpu
+            .bindgroup("splats_adam", &pipelines.layout_splats_adam)
+            .push_entry_buffer(&buffers.splat.splats)
+            .build();
+        let splats_redistribute = gpu
+            .bindgroup(
+                "splats_redistribute",
+                &pipelines.layout_splats_redistribute,
+            )
+            .push_entry_buffer(&buffers.splat.splats)
+            .build();
+        let splats_cache_fill = gpu
+            .bindgroup(
+                "splats_cache_fill",
+                &pipelines.layout_splats_cache_fill,
+            )
+            .push_entry_buffer(&buffers.splat.splats)
+            .push_entry_buffer(&buffers.splat.splat_caches)
+            .build();
+        let learn_backward = gpu
+            .bindgroup("learn_backward", &pipelines.layout_learn_backward)
+            .push_entry_buffer(&buffers.splat.gradients)
+            .push_entry_buffer(&buffers.tile_loss)
+            .build();
+        let learn_gradients_ro = gpu
+            .bindgroup(
+                "learn_gradients_ro",
+                &pipelines.layout_learn_gradients_ro,
+            )
+            .push_entry_buffer(&buffers.splat.gradients)
+            .build();
+        let adam_rw = gpu
+            .bindgroup("adam_rw", &pipelines.layout_adam_rw)
+            .push_entry_buffer(&buffers.splat.adam_moment1)
+            .push_entry_buffer(&buffers.splat.adam_moment2)
+            .build();
+
+        SplatBindGroups {
+            splats_ro,
+            splats_adam,
+            splats_redistribute,
+            splats_cache_fill,
+            learn_backward,
+            learn_gradients_ro,
+            adam_rw,
+        }
+    }
+
+    pub fn recreate_splats(
+        &mut self,
+        gpu: &GpuContext,
+        pipelines: &Pipelines,
+        buffers: &Buffers,
+    ) {
+        self.splat =
+            Self::create_splat_bind_groups(gpu, pipelines, buffers);
     }
 
     pub fn create_bin_data(
@@ -237,4 +250,16 @@ impl BindGroups {
         self.redistribute_select = redistribute_select;
         self.redistribute_move = redistribute_move;
     }
+}
+
+pub struct SplatBindGroups {
+    pub splats_ro: BindGroup,
+    pub splats_adam: BindGroup,
+    pub splats_redistribute: BindGroup,
+    pub splats_cache_fill: BindGroup,
+
+    pub learn_backward: BindGroup,
+    pub learn_gradients_ro: BindGroup,
+
+    pub adam_rw: BindGroup,
 }

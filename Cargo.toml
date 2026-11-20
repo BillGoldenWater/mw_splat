@@ -12,10 +12,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 delegate = "0.13.5"
 dotenvy = "0.15.7"
 glam = { version = "0.34.1", features = ["bytemuck", "serde"] }
-image = { version = "0.25.10", default-features = false, features = [
-    "png",
-    "jpeg",
-] }
+image = "0.25.10"
 include_dir = "0.7.4"
 petgraph = "0.8.3"
 pollster = "1.0.1"
@@ -34,7 +31,4 @@ wesl-core = "0.1.0"
 wgpu = "30.0.1"
 
 [features]
-# default = ["gpu_profiling"]
-gpu_profiling = []
-gpu_disable_atomic_f32 = []
 ir_pretty = []

@@ -36,11 +36,11 @@ const LN_SIZE_MAX: f32 = log(20000.);
 @compute @workgroup_size(WG_SIZE)
 fn adam(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) wg_num: vec3u) {
     let idx = id.x + id.y * WG_SIZE * wg_num.x;
-    if idx >= arrayLength(&splats) {
+    if idx >= info.splats_length {
         return;
     }
 
-    let g = sum_grad(idx, arrayLength(&splats));
+    let g = sum_grad(idx, info.splats_length);
     var grad: Splat;
     grad.pos = vec2f(g.x, g.y);
     grad.size = vec2f(g.w, g.h);
@@ -92,9 +92,30 @@ fn adam(@builtin(global_invocation_id) id: vec3u, @builtin(num_workgroups) wg_nu
     raw.color -= rate * (lr_col * m.color) / (sqrt(v.color) + vec4f(ADAM_EPS));
     raw.scale -= rate * (lr.scale * m.scale) / (sqrt(v.scale) + vec2f(ADAM_EPS));
 
-    raw.size = min(raw.size, vec2f(LN_SIZE_MAX));
+    let pos_prev = raw.pos;
+    raw.pos = clamp(raw.pos, vec2f(0.5), info.canvas.dimsf - vec2f(0.5));
+    let pos_clamped = raw.pos != pos_prev;
+    m.pos = select(m.pos, vec2f(0.0), pos_clamped);
+    v.pos = select(v.pos, vec2f(0.0), pos_clamped);
+
+    let size_min = log(2.0 * info.canvas.ramp_cap);
+    let size_prev = raw.size;
+    raw.size = clamp(raw.size, vec2f(size_min), vec2f(LN_SIZE_MAX));
+    let size_clamped = raw.size != size_prev;
+    m.size = select(m.size, vec2f(0.0), size_clamped);
+    v.size = select(v.size, vec2f(0.0), size_clamped);
+
+    let color_prev = raw.color;
     raw.color = clamp(raw.color, vec4f(-10.0), vec4f(10.0));
+    let color_clamped = raw.color != color_prev;
+    m.color = select(m.color, vec4f(0.0), color_clamped);
+    v.color = select(v.color, vec4f(0.0), color_clamped);
+
+    let scale_prev = raw.scale;
     raw.scale = clamp(raw.scale, vec2f(-10.0), vec2f(10.0));
+    let scale_clamped = raw.scale != scale_prev;
+    m.scale = select(m.scale, vec2f(0.0), scale_clamped);
+    v.scale = select(v.scale, vec2f(0.0), scale_clamped);
 
     splats[idx] = splat_from_raw(raw);
     moment1[idx] = m;
@@ -143,49 +164,32 @@ fn splat_from_raw(raw: Splat) -> Splat {
 
 fn sum_grad(idx: u32, splat_count: u32) -> Gradient {
     var total: Gradient;
-    @if(atomic_f32) {
-        for(var copy_idx = 0u; copy_idx < GRAD_COPIES; copy_idx += 1u) {
-            let g = grads[splat_count * copy_idx + idx];
-            total.x += g.x;
-            total.y += g.y;
-            total.w += g.w;
-            total.h += g.h;
-            total.rot += g.rot;
-            total.r += g.r;
-            total.g += g.g;
-            total.b += g.b;
-            total.a += g.a;
-            total.scale_x += g.scale_x;
-            total.scale_y += g.scale_y;
-        }
-    } @else {
-        for(var copy_idx = 0u; copy_idx < GRAD_COPIES; copy_idx += 1u) {
-            let g = grads[splat_count * copy_idx + idx];
-            total.x += f32(g.x);
-            total.y += f32(g.y);
-            total.w += f32(g.w);
-            total.h += f32(g.h);
-            total.rot += f32(g.rot);
-            total.r += f32(g.r);
-            total.g += f32(g.g);
-            total.b += f32(g.b);
-            total.a += f32(g.a);
-            total.scale_x += f32(g.scale_x);
-            total.scale_y += f32(g.scale_y);
-        }
-
-        let sc = grad_scales(splats[idx], info.canvas.dims);
-        total.x /= sc.lin.x;
-        total.y /= sc.lin.y;
-        total.w /= sc.lin.x;
-        total.h /= sc.lin.y;
-        total.rot /= sc.quad;
-        total.r /= sc.quad;
-        total.g /= sc.quad;
-        total.b /= sc.quad;
-        total.a /= sc.quad;
-        total.scale_x /= sc.scale_norm.x;
-        total.scale_y /= sc.scale_norm.y;
+    for(var copy_idx = 0u; copy_idx < GRAD_COPIES; copy_idx += 1u) {
+        let g = grads[splat_count * copy_idx + idx];
+        total.x += f32(g.x);
+        total.y += f32(g.y);
+        total.w += f32(g.w);
+        total.h += f32(g.h);
+        total.rot += f32(g.rot);
+        total.r += f32(g.r);
+        total.g += f32(g.g);
+        total.b += f32(g.b);
+        total.a += f32(g.a);
+        total.scale_x += f32(g.scale_x);
+        total.scale_y += f32(g.scale_y);
     }
+
+    let sc = grad_scales(splats[idx], info.canvas.dims);
+    total.x /= sc.lin.x;
+    total.y /= sc.lin.y;
+    total.w /= sc.lin.x;
+    total.h /= sc.lin.y;
+    total.rot /= sc.quad;
+    total.r /= sc.quad;
+    total.g /= sc.quad;
+    total.b /= sc.quad;
+    total.a /= sc.quad;
+    total.scale_x /= sc.scale_norm.x;
+    total.scale_y /= sc.scale_norm.y;
     return total;
 }

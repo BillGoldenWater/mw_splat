@@ -17,8 +17,7 @@ pub struct Buffers {
     pub info: Buffer,
     pub reference: Buffer,
 
-    pub splats: Buffer,
-    pub splat_caches: Buffer,
+    pub splat: SplatBuffers,
 
     /// clear every pass
     pub bin_counts: Buffer,
@@ -32,16 +31,10 @@ pub struct Buffers {
     pub bin_data: Buffer,
 
     pub pixels: Buffer,
-    pub transmittance: Buffer,
+    pub log_transmittance: Buffer,
     pub loss_weights: Buffer,
 
-    /// clear every pass
-    pub gradients: Buffer,
-    /// clear every pass
-    pub loss: Buffer,
-
-    pub adam_moment1: Buffer,
-    pub adam_moment2: Buffer,
+    pub tile_loss: Buffer,
 
     pub redistribute_sampling_cells: Buffer,
     pub redistribute_state: Buffer,
@@ -52,7 +45,7 @@ impl Buffers {
     pub fn new(
         gpu: &GpuContext,
         info: &gpu_types::Info,
-        splat_count: u64,
+        splat_capacity: u64,
         bin_capacity: u64,
     ) -> Self {
         let canvas_buffer_cap =
@@ -70,18 +63,7 @@ impl Buffers {
             BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
 
-        let splats = gpu.create_buffer(
-            "splats",
-            gpu_types::Splat::STRIDE * splat_count,
-            BufferUsages::STORAGE
-                | BufferUsages::COPY_DST
-                | BufferUsages::COPY_SRC,
-        );
-        let splat_caches = gpu.create_buffer(
-            "splat_caches",
-            gpu_types::STRIDE_SPLAT_CACHE * splat_count,
-            BufferUsages::STORAGE,
-        );
+        let splat = Self::create_splat_buffers(gpu, splat_capacity);
 
         let bin_counts = gpu.create_buffer(
             "bin_counts",
@@ -119,8 +101,8 @@ impl Buffers {
             Vec4::STRIDE * canvas_buffer_cap,
             BufferUsages::STORAGE | BufferUsages::COPY_SRC,
         );
-        let transmittance = gpu.create_buffer(
-            "transmittance",
+        let log_transmittance = gpu.create_buffer(
+            "log_transmittance",
             f32::STRIDE * canvas_buffer_cap,
             BufferUsages::STORAGE,
         );
@@ -130,28 +112,10 @@ impl Buffers {
             BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
 
-        let gradients = gpu.create_buffer(
-            "gradients",
-            gpu_types::STRIDE_GRADIENT * splat_count * GRAD_COPIES,
-            BufferUsages::STORAGE | BufferUsages::COPY_DST,
-        );
-        let loss = gpu.create_buffer(
-            "loss",
-            f32::STRIDE,
-            BufferUsages::STORAGE
-                | BufferUsages::COPY_DST
-                | BufferUsages::COPY_SRC,
-        );
-
-        let adam_moment1 = gpu.create_buffer(
-            "adam_moment1",
-            Splat::STRIDE * splat_count,
-            BufferUsages::STORAGE,
-        );
-        let adam_moment2 = gpu.create_buffer(
-            "adam_moment1",
-            Splat::STRIDE * splat_count,
-            BufferUsages::STORAGE,
+        let tile_loss = gpu.create_buffer(
+            "tile_loss",
+            f32::STRIDE * bin_count,
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC,
         );
 
         let redistribute_sampling_cells = gpu.create_buffer(
@@ -173,8 +137,7 @@ impl Buffers {
         Self {
             info,
             reference,
-            splats,
-            splat_caches,
+            splat,
             bin_counts,
             bin_heads,
             bin_bump,
@@ -182,16 +145,111 @@ impl Buffers {
             bin_cursor,
             bin_data,
             pixels,
-            transmittance,
+            log_transmittance,
             loss_weights,
-            gradients,
-            loss,
-            adam_moment1,
-            adam_moment2,
+            tile_loss,
             redistribute_sampling_cells,
             redistribute_state,
             redistribute_inverse_cdf,
         }
+    }
+
+    pub fn create_splat_buffers(
+        gpu: &GpuContext,
+        capacity: u64,
+    ) -> SplatBuffers {
+        let splats = gpu.create_buffer(
+            "splats",
+            Splat::STRIDE * capacity,
+            BufferUsages::STORAGE
+                | BufferUsages::COPY_DST
+                | BufferUsages::COPY_SRC,
+        );
+        let splat_caches = gpu.create_buffer(
+            "splat_caches",
+            gpu_types::STRIDE_SPLAT_CACHE * capacity,
+            BufferUsages::STORAGE,
+        );
+        let gradients = gpu.create_buffer(
+            "gradients",
+            gpu_types::STRIDE_GRADIENT * capacity * GRAD_COPIES,
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
+        let adam_moment1 = gpu.create_buffer(
+            "adam_moment1",
+            Splat::STRIDE * capacity,
+            BufferUsages::STORAGE
+                | BufferUsages::COPY_DST
+                | BufferUsages::COPY_SRC,
+        );
+        let adam_moment2 = gpu.create_buffer(
+            "adam_moment2",
+            Splat::STRIDE * capacity,
+            BufferUsages::STORAGE
+                | BufferUsages::COPY_DST
+                | BufferUsages::COPY_SRC,
+        );
+
+        SplatBuffers {
+            splats,
+            splat_caches,
+            gradients,
+            adam_moment1,
+            adam_moment2,
+        }
+    }
+
+    pub fn realloc_splats(
+        &mut self,
+        gpu: &GpuContext,
+        new_capacity: u64,
+    ) {
+        tracing::debug!("realloc splats to {new_capacity}");
+        let splat = Self::create_splat_buffers(gpu, new_capacity);
+
+        let mut encoder =
+            gpu.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("realloc splats"),
+            });
+
+        let copy_size = self.splat.splats.size().min(splat.splats.size());
+        encoder.copy_buffer_to_buffer(
+            &self.splat.splats,
+            0,
+            &splat.splats,
+            0,
+            copy_size,
+        );
+
+        let copy_size = self
+            .splat
+            .adam_moment1
+            .size()
+            .min(splat.adam_moment1.size());
+        encoder.copy_buffer_to_buffer(
+            &self.splat.adam_moment1,
+            0,
+            &splat.adam_moment1,
+            0,
+            copy_size,
+        );
+
+        let copy_size = self
+            .splat
+            .adam_moment2
+            .size()
+            .min(splat.adam_moment2.size());
+        encoder.copy_buffer_to_buffer(
+            &self.splat.adam_moment2,
+            0,
+            &splat.adam_moment2,
+            0,
+            copy_size,
+        );
+
+        gpu.submit([encoder.finish()]);
+
+        self.splat = splat;
     }
 
     pub fn create_bin_data(
@@ -205,24 +263,36 @@ impl Buffers {
         )
     }
 
-    pub fn grow_bin_data(&mut self, gpu: &GpuContext) {
-        let old_size = self.bin_data.size();
-        let old_cap = old_size.div_ceil(u32::STRIDE);
-        let new_cap = old_cap * 2;
-        tracing::debug!("grow bin data from {old_cap} to {new_cap}");
-        self.bin_data = Self::create_bin_data(gpu, new_cap);
-    }
-
-    pub fn grow_sampling_cells(
+    pub fn realloc_bin_data(
         &mut self,
         gpu: &GpuContext,
-        cell_count: u64,
+        new_capacity: u64,
     ) {
-        tracing::debug!("grow sampling cells to {cell_count}");
+        tracing::debug!("realloc bin data to {new_capacity}");
+        self.bin_data = Self::create_bin_data(gpu, new_capacity);
+    }
+
+    pub fn realloc_sampling_cells(
+        &mut self,
+        gpu: &GpuContext,
+        new_capacity: u64,
+    ) {
+        tracing::debug!("realloc sampling cells to {new_capacity}");
         self.redistribute_sampling_cells = gpu.create_buffer(
             "sampling_cells",
-            STRIDE_SAMPLING_CELL * cell_count,
+            STRIDE_SAMPLING_CELL * new_capacity,
             BufferUsages::STORAGE,
         );
     }
+}
+
+pub struct SplatBuffers {
+    pub splats: Buffer,
+    pub splat_caches: Buffer,
+
+    /// clear every pass
+    pub gradients: Buffer,
+
+    pub adam_moment1: Buffer,
+    pub adam_moment2: Buffer,
 }

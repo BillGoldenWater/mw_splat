@@ -5,7 +5,7 @@
  */
 
 import package::libs::types::Splat;
-import package::libs::constants::FP_SCALE;
+import package::libs::constants::GRAD_SCALE;
 
 struct Gradient {
     x: f32,
@@ -21,37 +21,32 @@ struct Gradient {
     scale_y: f32,
 }
 
-@if(atomic_f32)
-alias GradElem = f32;
-@else
-alias GradElem = i32;
-
 struct GradientBuf {
-    x: GradElem,
-    y: GradElem,
-    w: GradElem,
-    h: GradElem,
-    rot: GradElem,
-    r: GradElem,
-    g: GradElem,
-    b: GradElem,
-    a: GradElem,
-    scale_x: GradElem,
-    scale_y: GradElem,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    rot: i32,
+    r: i32,
+    g: i32,
+    b: i32,
+    a: i32,
+    scale_x: i32,
+    scale_y: i32,
 }
 
 struct GradientAtomic {
-    x: atomic<GradElem>,
-    y: atomic<GradElem>,
-    w: atomic<GradElem>,
-    h: atomic<GradElem>,
-    rot: atomic<GradElem>,
-    r: atomic<GradElem>,
-    g: atomic<GradElem>,
-    b: atomic<GradElem>,
-    a: atomic<GradElem>,
-    scale_x: atomic<GradElem>,
-    scale_y: atomic<GradElem>,
+    x: atomic<i32>,
+    y: atomic<i32>,
+    w: atomic<i32>,
+    h: atomic<i32>,
+    rot: atomic<i32>,
+    r: atomic<i32>,
+    g: atomic<i32>,
+    b: atomic<i32>,
+    a: atomic<i32>,
+    scale_x: atomic<i32>,
+    scale_y: atomic<i32>,
 }
 
 struct GradScales {
@@ -64,9 +59,9 @@ fn grad_scales(splat: Splat, canvas_dims: vec2u) -> GradScales {
     let canvas_area = f32(canvas_dims.x * canvas_dims.y);
     let extent = splat.size * splat.scale;
     var s: GradScales;
-    s.lin = FP_SCALE * canvas_area / max(extent, vec2f(1e-6));
-    s.quad = FP_SCALE * canvas_area / max(extent.x * extent.y, 1e-6);
-    s.scale_norm = FP_SCALE * canvas_area / max(
+    s.lin = GRAD_SCALE * canvas_area / max(extent, vec2f(1e-6));
+    s.quad = GRAD_SCALE * canvas_area / max(extent.x * extent.y, 1e-6);
+    s.scale_norm = GRAD_SCALE * canvas_area / max(
             vec2f(
                 splat.size.x * splat.size.y * splat.scale.y,
                 splat.size.x * splat.size.y * splat.scale.x,

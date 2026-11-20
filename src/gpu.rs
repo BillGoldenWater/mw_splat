@@ -18,22 +18,23 @@ use glam::UVec2;
 use image::{ImageBuffer, Pixel};
 use wesl::{CompileOptions, Compiler, resolver::VirtualResolver};
 use wgpu::{
-    Backends, BindGroup, BindGroupDescriptor, BindGroupEntry,
+    Adapter, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry,
     BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
     BindingResource, BindingType, Buffer, BufferAddress,
     BufferBindingType, BufferDescriptor, BufferSize, BufferUsages,
     CommandBuffer, CommandEncoder, CommandEncoderDescriptor,
     ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor,
-    Features, InstanceDescriptor, MapMode, PipelineCompilationOptions,
-    PipelineLayout, PipelineLayoutDescriptor, PollType, QuerySet,
-    QuerySetDescriptor, Queue, QueueWriteBufferView, ShaderModule,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages, SubmissionIndex,
-    Texture, TextureDescriptor,
+    Features, Instance, InstanceDescriptor, MapMode,
+    PipelineCompilationOptions, PipelineLayout, PipelineLayoutDescriptor,
+    PollType, QuerySet, QuerySetDescriptor, QueryType, Queue,
+    QueueWriteBufferView, ShaderModule, ShaderModuleDescriptor,
+    ShaderSource, ShaderStages, SubmissionIndex, Texture,
+    TextureDescriptor,
 };
 
 use crate::{
     constants::{
-        FP_SCALE, GRAD_COPIES, INVERSE_CDF_SIZE, TILE_SIZE, WG_SIZE,
+        GRAD_COPIES, GRAD_SCALE, INVERSE_CDF_SIZE, TILE_SIZE, WG_SIZE,
         WG_SIZE_2D,
     },
     utils::copy_with_stride,
@@ -41,13 +42,17 @@ use crate::{
 
 #[derive(Clone)]
 pub struct GpuContext {
+    instance: Instance,
+    adapter: Adapter,
     device: Device,
     queue: Queue,
     shaders: Shaders,
-    atomic_f32: bool,
 }
 
 impl GpuContext {
+    const PROFILING_FEATURES: Features = Features::TIMESTAMP_QUERY
+        .union(Features::TIMESTAMP_QUERY_INSIDE_PASSES);
+
     pub fn new() -> Result<Self> {
         let instance = wgpu::Instance::new(
             InstanceDescriptor {
@@ -70,26 +75,10 @@ impl GpuContext {
         ))
         .context("instance.request_adapter")?;
 
-        let have_atomic_f32 =
-            adapter.features().contains(Features::SHADER_FLOAT32_ATOMIC);
-
-        let atomic_f32 =
-            have_atomic_f32 && !cfg!(feature = "gpu_disable_atomic_f32");
-
         let features = Features::IMMEDIATES
             | Features::BUFFER_BINDING_ARRAY
             | Features::STORAGE_RESOURCE_BINDING_ARRAY
-            | if atomic_f32 {
-                Features::SHADER_FLOAT32_ATOMIC
-            } else {
-                Default::default()
-            }
-            | if cfg!(feature = "gpu_profiling") {
-                Features::TIMESTAMP_QUERY
-                    | Features::TIMESTAMP_QUERY_INSIDE_PASSES
-            } else {
-                Default::default()
-            };
+            | (adapter.features() & Self::PROFILING_FEATURES);
 
         let (device, queue) = pollster::block_on(adapter.request_device(
             &DeviceDescriptor {
@@ -102,13 +91,14 @@ impl GpuContext {
         ))
         .context("adapter.request_device")?;
 
-        let shaders = Shaders::new(&device, atomic_f32);
+        let shaders = Shaders::new(&device);
 
         Ok(Self {
+            instance,
+            adapter,
             device,
             queue,
             shaders,
-            atomic_f32,
         })
     }
 
@@ -118,6 +108,10 @@ impl GpuContext {
 
     pub fn queue(&self) -> &Queue {
         &self.queue
+    }
+
+    pub fn supports_profiling(&self) -> bool {
+        self.device.features().contains(Self::PROFILING_FEATURES)
     }
 
     pub fn create_buffer(
@@ -284,9 +278,58 @@ impl GpuContext {
     pub fn shaders(&self) -> &Shaders {
         &self.shaders
     }
+}
 
-    pub fn atomic_f32(&self) -> bool {
-        self.atomic_f32
+pub struct Profiling<T, U> {
+    pub query_set: QuerySet,
+    pub buffer: Buffer,
+    pub reader: BufferReader<T, U>,
+}
+
+impl<T: Pod + GpuLayout, U> Profiling<T, U> {
+    pub fn new(gpu: &GpuContext) -> Option<Self> {
+        if !gpu.supports_profiling() {
+            return None;
+        }
+
+        let query_set = gpu.create_query_set(&QuerySetDescriptor {
+            label: Some("timestamps"),
+            ty: QueryType::Timestamp,
+            count: Self::query_count(),
+        });
+        let buffer = gpu.create_buffer(
+            "timestamps",
+            T::STRIDE,
+            BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
+        );
+
+        Some(Self {
+            reader: gpu.buffer_reader(buffer.clone()),
+            query_set,
+            buffer,
+        })
+    }
+
+    fn query_count() -> u32 {
+        u32::try_from(T::SIZE / u64::STRIDE).unwrap()
+    }
+
+    pub fn begin_read(
+        &mut self,
+        encoder: &mut CommandEncoder,
+        user_data: U,
+    ) {
+        encoder.resolve_query_set(
+            &self.query_set,
+            0..Self::query_count(),
+            &self.buffer,
+            0,
+        );
+        self.reader.try_initiate_read(encoder, user_data);
+    }
+
+    pub fn try_read(&mut self) -> Option<(T, U)> {
+        self.reader.try_resolve_read_pod()
     }
 }
 
@@ -464,7 +507,7 @@ pub struct Shaders {
 }
 
 impl Shaders {
-    pub fn new(device: &Device, atomic_f32: bool) -> Self {
+    pub fn new(device: &Device) -> Self {
         const WESL_SRC: include_dir::Dir<'static> =
             include_dir::include_dir!("src/shaders/");
         fn fill_resolver(
@@ -491,11 +534,8 @@ impl Shaders {
             }
         }
 
-        let mut features = wesl::Features::new();
-        features.set("atomic_f32", atomic_f32);
         let options = CompileOptions {
             lower: true,
-            features,
             ..Default::default()
         };
         let mut resolver = VirtualResolver::new();
@@ -511,7 +551,7 @@ const TILE_SIZE: u32 = {TILE_SIZE}u;
 const GRAD_COPIES: u32 = {GRAD_COPIES}u;
 const INVERSE_CDF_SIZE: u32 = {INVERSE_CDF_SIZE}u;
 
-const FP_SCALE: f32 = {FP_SCALE:.1};
+const GRAD_SCALE: f32 = {GRAD_SCALE:.1};
 "#
             )
             .into(),
@@ -783,7 +823,9 @@ impl<T: Pod + GpuLayout, U> BufferReader<T, U> {
         let mut result = None;
         self.try_resolve_read(|view, user_data| {
             result = Some((
-                bytemuck::pod_read_unaligned::<T>(&view[..T::SIZE as usize]),
+                bytemuck::pod_read_unaligned::<T>(
+                    &view[..T::SIZE as usize],
+                ),
                 user_data,
             ))
         });

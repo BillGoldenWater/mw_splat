@@ -65,21 +65,22 @@ fn redistribute_move(
     @builtin(num_workgroups) wg_num: vec3u,
 ) {
     let splat_idx = id.x + id.y * WG_SIZE * wg_num.x;
-    if splat_idx >= arrayLength(&splats) {
+    if splat_idx >= info.splats_length {
         return;
     }
 
     let splat = &splats[splat_idx];
-    let off_grid = any(splat.pos < vec2f(0.)) || any(splat.pos >= info.canvas.dimsf);
 
     let uncovered = 1.0 - coverage(*splat);
-    var should_move = off_grid || redistribute_hash(splat_idx, 7u) < uncovered;
+    let low_coverage = redistribute_hash(splat_idx, 7u) < uncovered;
+
+    var should_move = low_coverage;
     if !should_move {
         let cell_coord = vec2i(splat.pos / f32(imm.cell_size));
         let cell_idx = u32(cell_coord.x) + u32(cell_coord.y) * imm.grid_dims.x;
-        let cell_loss = sampling_cells[cell_idx].loss;
-        let below_boundary = cell_loss < state.boundary_lo;
-        let boundary_donor = cell_loss < state.boundary_hi
+        let cell_peak = sampling_cells[cell_idx].peak;
+        let below_boundary = cell_peak < state.boundary_lo;
+        let boundary_donor = cell_peak < state.boundary_hi
             && redistribute_hash(splat_idx, imm.seed) < state.boundary_frac;
         should_move = below_boundary || boundary_donor;
     }
@@ -91,17 +92,21 @@ fn redistribute_move(
     let cdf_rand = redistribute_hash(splat_idx, 101u);
     let cdf_slot = min(u32(cdf_rand * f32(INVERSE_CDF_SIZE - 1u)), INVERSE_CDF_SIZE - 1u);
     let target_cell = inverse_cdf[cdf_slot];
+    let jitter_offset =
+        vec2f(redistribute_hash(splat_idx, 131u), redistribute_hash(splat_idx, 137u)) - vec2f(0.5);
     let target_hot_px = sampling_cells[target_cell].hot_px_idx;
-    var destination = hot_pixel_pos(target_hot_px);
+    var destination = hot_pixel_pos(target_hot_px) + jitter_offset * f32(imm.cell_size);
     destination = clamp(destination, vec2f(0.5), vec2f(info.canvas.dims) - 0.5);
 
     let dest_px = u32(destination.y) * info.canvas.stride + u32(destination.x);
     let target_color = reference[dest_px];
 
+    let moved_extent = imm.splat_size;
+    let moved_size = max(moved_extent, 2.0 * info.canvas.ramp_cap);
     splat.pos = destination;
-    splat.size = vec2f(imm.splat_size);
+    splat.size = vec2f(moved_size);
     splat.color = target_color;
-    splat.scale = vec2f(1.0);
+    splat.scale = vec2f(moved_extent / moved_size);
     splat.rot = 0.0;
     splat.order = MOVED_ORDER_BASE + splat_idx;
     moment1[splat_idx] = Splat();

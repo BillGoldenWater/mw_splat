@@ -25,7 +25,7 @@ fn bin_count(
     @builtin(local_invocation_index) l_ii: u32,
 ) {
     let idx = wg_id.x + wg_id.y * wg_num.x;
-    if idx >= arrayLength(&splats) {
+    if idx >= info.splats_length {
         return;
     }
 

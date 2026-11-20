@@ -25,7 +25,7 @@ var<storage, read> bin_data: array<u32>;
 @group(4) @binding(0)
 var<storage, read_write> pixels: array<vec4f>;
 @group(4) @binding(1)
-var<storage, read_write> transmittance: array<f32>;
+var<storage, read_write> log_transmittance: array<f32>;
 
 @compute @workgroup_size(WG_SIZE_2D, WG_SIZE_2D)
 fn render(@builtin(global_invocation_id) id: vec3u) {
@@ -39,7 +39,7 @@ fn render(@builtin(global_invocation_id) id: vec3u) {
     let px = vec2f(id.xy) + 0.5;
 
     var composite = info.canvas.background;
-    var trans = 1.0;
+    var log_trans = 0.0;
     for(var i = bin.base; i < bin.base + bin.len; i += 1u) {
         let splat_index = bin_data[i];
         let splat = splats[splat_index];
@@ -47,8 +47,8 @@ fn render(@builtin(global_invocation_id) id: vec3u) {
         let inv = 1.0 - sample * splat.color.a;
         composite *= inv;
         composite += splat.color * sample;
-        trans *= inv;
+        log_trans += log(inv);
     }
     pixels[idx] = composite;
-    transmittance[idx] = trans;
+    log_transmittance[idx] = log_trans;
 }

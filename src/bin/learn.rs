@@ -11,7 +11,7 @@ use mw_splat::{
     gpu::GpuContext,
     init::init,
     ir::Ir,
-    learn::{Learner, RunConfig},
+    learn::{Config, Learner, scheduler},
     utils::{init_env, load_loss_weights, load_premultiplied},
 };
 
@@ -73,25 +73,36 @@ fn main() -> Result<()> {
         Some(path) => Ir::load_json(path)?,
         None => init(&input, cli.splats, cli.seed),
     };
-    let mut learner = Learner::new(gpu, &input, Default::default(), &ir);
+    let config = Config::default();
+    let mut learner = Learner::new(gpu, &input, config, &ir);
     if let Some(weights) = &cli.weights {
         learner.set_loss_weights(&load_loss_weights(weights)?);
     }
-    learner.run(RunConfig {
-        iters: cli.iters,
-        lr_scale: cli.lr,
-        redistribute: Some(cli.redistribute),
-        seed: cli.seed,
-        ..Default::default()
-    });
+    learner.run(scheduler::default(
+        cli.iters,
+        cli.lr,
+        None,
+        Some(cli.redistribute),
+        cli.seed,
+    ));
+    tracing::info!(
+        "main run loss: {:.6e}, PSNR {:.2} dB",
+        learner.read_loss(),
+        learner.read_psnr()
+    );
     if cli.refine != 0 {
-        learner.run(RunConfig {
-            iters: cli.refine,
-            lr_scale: cli.lr,
-            lr_anneal_to: Some(cli.lr_refine_to),
-            seed: cli.seed,
-            ..Default::default()
-        });
+        learner.run(scheduler::default(
+            cli.refine,
+            cli.lr,
+            Some(cli.lr_refine_to),
+            None,
+            cli.seed,
+        ));
+        tracing::info!(
+            "refine loss: {:.6e}, PSNR {:.2} dB",
+            learner.read_loss(),
+            learner.read_psnr()
+        );
     }
     ir.splats = learner.read_splats();
 

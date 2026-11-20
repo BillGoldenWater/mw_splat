@@ -21,7 +21,7 @@ fn splats_cache_fill(
     @builtin(num_workgroups) wg_num: vec3u,
 ) {
     let idx = id.x + id.y * WG_SIZE * wg_num.x;
-    if idx >= arrayLength(&splats) {
+    if idx >= info.splats_length {
         return;
     }
 

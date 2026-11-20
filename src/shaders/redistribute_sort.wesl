@@ -4,8 +4,11 @@
  * SPDX-License-Identifier: MPL-2.0
  */
 
-import package::libs::types::Splat;
+import package::libs::types::{Info, Splat};
 import package::libs::constants::WG_SIZE;
+
+@group(0) @binding(0)
+var<storage, read> info: Info;
 
 @group(1) @binding(0)
 var<storage, read_write> splats: array<Splat>;
@@ -34,7 +37,7 @@ fn redistribute_sort(
     let rem = op_id & imm.step_mod_mask;
     let left = offset + rem;
     let right = select(left + imm.step, offset + imm.stage - 1u - rem, imm.stage >> 1u == imm.step);
-    if right >= arrayLength(&splats) {
+    if right >= info.splats_length {
         return;
     }
     if splats[left].order > splats[right].order {

@@ -5,9 +5,10 @@
 use glam::{UVec2, UVec4, Vec2, Vec4};
 use wgpu::Extent3d;
 
-#[cfg(feature = "gpu_profiling")]
-use crate::gpu::{GpuContext, GpuLayout};
-use crate::{gpu::align_to, ir};
+use crate::{
+    gpu::{GpuContext, align_to},
+    ir,
+};
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C, align(16))]
@@ -18,6 +19,10 @@ pub struct Info {
     pub tile_dims: UVec2,
     // offset 56, size 24, align 4
     pub lr: Lr,
+    // offset 80, size 4, align 4
+    pub splats_length: u32,
+    // offset 84, size 12 (align 16)
+    pub _pad: [u8; 12],
 }
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -62,12 +67,12 @@ impl Default for Lr {
     fn default() -> Self {
         // for 2k iters, 50 redistribute
         Self {
-            position: 0.31874454,
-            size: 0.033444524,
-            rotation: 0.011405053,
-            color: 0.62412935,
-            alpha: 0.0011357757,
-            scale: 0.044140805,
+            position: 0.15,
+            size: 0.005,
+            rotation: 0.01,
+            color: 0.24,
+            alpha: 0.24,
+            scale: 0.03,
         }
     }
 }
@@ -219,7 +224,6 @@ pub const STRIDE_GRADIENT: u64 = align_to(4 * 11, 4);
 pub const STRIDE_SAMPLING_CELL: u64 = align_to(4 + 4, 4);
 pub const STRIDE_REDISTRIBUTE_STATE: u64 = align_to(4 + 4 + 4, 4);
 
-#[cfg(feature = "gpu_profiling")]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C, align(8))]
 pub struct Timestamps {
@@ -239,10 +243,7 @@ pub struct Timestamps {
     pub redistribute_sort: u64,
 }
 
-#[cfg(feature = "gpu_profiling")]
 impl Timestamps {
-    pub const COUNT: u32 = (Self::SIZE / u64::STRIDE) as u32;
-
     pub fn log(&self, gpu: &GpuContext, iter_num: u32) {
         use std::{fmt::Write, time::Duration};
 

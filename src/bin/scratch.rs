@@ -8,7 +8,7 @@ use image::{DynamicImage, ImageBuffer, Rgba};
 use mw_splat::{
     gpu::GpuContext,
     ir::Ir,
-    learn::{Learner, RunConfig},
+    learn::{Learner, scheduler},
     utils::{init_env, load_premultiplied},
 };
 
@@ -103,13 +103,7 @@ fn run(
 ) -> Ir {
     let mut learner =
         Learner::new(gpu, reference, Default::default(), ir);
-    learner.run(RunConfig {
-        iters,
-        lr_scale: lr,
-        redistribute,
-        seed: 1,
-        ..Default::default()
-    });
+    learner.run(scheduler::default(iters, lr, None, redistribute, 1));
     let mut ir = ir.clone();
     ir.splats = learner.read_splats();
     ir

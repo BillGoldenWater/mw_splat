@@ -10,12 +10,11 @@ import package::libs::constants::{
     BWD_BLOCK_SIZE,
     BWD_WG_LEN,
     BWD_WG_SIZE,
-    FP_SCALE,
     GRAD_COPIES,
     TILE_SIZE
 };
 import package::libs::kernel::sample_full;
-import package::libs::learn::{GradElem, Gradient, GradientAtomic, grad_scales};
+import package::libs::learn::{Gradient, GradientAtomic, grad_scales};
 
 @group(0) @binding(0)
 var<storage, read> info: Info;
@@ -38,22 +37,22 @@ var<storage, read> bin_data: array<u32>;
 @group(4) @binding(0)
 var<storage, read> pixels: array<vec4f>;
 @group(4) @binding(1)
-var<storage, read> transmittance: array<f32>;
+var<storage, read> log_transmittance: array<f32>;
 @group(4) @binding(2)
 var<storage, read> loss_weights: array<f32>;
 
 @group(5) @binding(0)
 var<storage, read_write> grads: array<GradientAtomic>;
 @group(5) @binding(1)
-var<storage, read_write> loss: atomic<GradElem>;
+var<storage, read_write> tile_loss: array<f32>;
 
 struct Px {
-    composite: vec4f,
-    adjoint: vec4f,
+    below: vec4f,
+    pixel_grad: vec4f,
     center: vec2f,
-    t_before: f32,
-    transmittance: f32,
-    on: bool,
+    log_below: f32,
+    log_total: f32,
+    valid: bool,
 }
 
 var<workgroup> workgroup_loss_buf: array<f32, BWD_WG_LEN>;
@@ -80,30 +79,31 @@ fn backward(
     var block_loss = 0.;
     for(var block_idx = 0u; block_idx < BWD_BLOCK_LEN; block_idx += 1) {
         let px_pos = block_pos + vec2u(block_idx % BWD_BLOCK_SIZE, block_idx / BWD_BLOCK_SIZE);
+        let b = &block_pixels[block_idx];
 
-        let in_canvas = all(px_pos < info.canvas.dims);
-        block_pixels[block_idx].on = in_canvas;
-        if !in_canvas {
+        b.valid = all(px_pos < info.canvas.dims);
+        if !b.valid {
             continue;
         }
 
-        block_pixels[block_idx].center = vec2f(px_pos) + 0.5;
-        block_pixels[block_idx].composite = info.canvas.background;
-        block_pixels[block_idx].t_before = 1.;
+        b.center = vec2f(px_pos) + 0.5;
+        b.below = info.canvas.background;
+        b.log_below = 0.;
 
         let px_idx = px_pos.x + px_pos.y * info.canvas.stride;
-        let weight = loss_weights[px_idx];
-        let px = pixels[px_idx];
-        let tgt = reference[px_idx];
-        let black = px.rgb - tgt.rgb;
-        let white = black + vec3f(tgt.a - px.a);
-        block_loss += (dot(black, black) + dot(white, white)) * loss_norm * weight;
+        let loss_weight = loss_weights[px_idx];
+        let actual = pixels[px_idx];
+        let expected = reference[px_idx];
+        let black_err = actual.rgb - expected.rgb;
+        let white_err = black_err + vec3f(expected.a - actual.a);
+        block_loss += (dot(black_err, black_err) + dot(white_err, white_err)) * loss_norm
+            * loss_weight;
 
-        block_pixels[block_idx].adjoint = vec4f(
-                (black + white) * (2.0 * loss_norm * weight),
-                -2.0 * loss_norm * weight * (white.x + white.y + white.z),
+        b.pixel_grad = vec4f(
+                (black_err + white_err) * (2.0 * loss_norm * loss_weight),
+                -2.0 * loss_norm * loss_weight * (white_err.x + white_err.y + white_err.z),
             );
-        block_pixels[block_idx].transmittance = transmittance[px_idx];
+        b.log_total = log_transmittance[px_idx];
     }
 
     workgroup_loss_buf[l_ii] = block_loss;
@@ -115,10 +115,7 @@ fn backward(
         workgroupBarrier();
     }
     if l_ii == 0u {
-        @if(atomic_f32)
-        atomicAdd(&loss, workgroup_loss_buf[0]);
-        @else
-        atomicAdd(&loss, i32(round(workgroup_loss_buf[0] * FP_SCALE)));
+        tile_loss[tile_idx] = workgroup_loss_buf[0];
     }
 
     let head = bin_heads[tile_idx];
@@ -127,83 +124,62 @@ fn backward(
         return;
     }
 
-    let grad_base = arrayLength(&splats) * (tile_idx % GRAD_COPIES);
-    let bg_transparency = 1.0 - info.canvas.background.a;
+    let grad_base = info.splats_length * (tile_idx % GRAD_COPIES);
     // NOTE: is uniform inside workgroup
     for(var bin_idx = head.base; bin_idx < head.base + head.len; bin_idx += 1u) {
         let splat_idx = bin_data[bin_idx];
         let splat = splats[splat_idx];
         let splat_cache = splat_caches[splat_idx];
 
-        var grads_local: Gradient;
-        var touched = false;
+        var block_grads: Gradient;
+        var has_grad = false;
 
         for(var block_idx = 0u; block_idx < BWD_BLOCK_LEN; block_idx += 1) {
-            if !block_pixels[block_idx].on {
+            if !block_pixels[block_idx].valid {
                 continue;
             }
 
             let b = &block_pixels[block_idx];
 
-            let smp = sample_full(splat, splat_cache, b.center, info.canvas.ramp_cap);
-            let inv = 1. - (smp.kernel * splat.color.a);
-            let denom = b.t_before * inv;
-            if smp.kernel > 0.0 {
-                var t_after = 0.0;
-                if denom > 1e-30 {
-                    t_after = b.transmittance / denom;
-                }
-                let adjoint4 = b.adjoint * t_after;
-                let d_cov = adjoint4.a * bg_transparency * b.t_before
-                    - dot(b.composite.rgb, adjoint4.rgb);
-                let dk = vec4f(adjoint4.rgb, d_cov);
-                let d_kernel = dot(dk, splat.color);
-                grads_local.x += smp.d_pos.x * d_kernel;
-                grads_local.y += smp.d_pos.y * d_kernel;
-                grads_local.w += smp.d_size.x * d_kernel;
-                grads_local.h += smp.d_size.y * d_kernel;
-                grads_local.rot += smp.d_rot * d_kernel;
-                grads_local.r += dk.x * smp.kernel;
-                grads_local.g += dk.y * smp.kernel;
-                grads_local.b += dk.z * smp.kernel;
-                grads_local.a += dk.w * smp.kernel;
-                grads_local.scale_x += smp.d_scale.x * d_kernel;
-                grads_local.scale_y += smp.d_scale.y * d_kernel;
-                touched = true;
+            let sample = sample_full(splat, splat_cache, b.center, info.canvas);
+            let inv = 1. - (sample.kernel * splat.color.a);
+            let log_through = b.log_below + log(inv);
+            if sample.affects {
+                let splat_grad = b.pixel_grad * exp(b.log_total - log_through);
+                let d_loss_d_inv = dot(splat_grad, b.below);
+                let d_color = splat_grad - vec4f(0., 0., 0., d_loss_d_inv);
+                let d_kernel = dot(d_color, splat.color);
+                block_grads.x += sample.d_pos.x * d_kernel;
+                block_grads.y += sample.d_pos.y * d_kernel;
+                block_grads.w += sample.d_size.x * d_kernel;
+                block_grads.h += sample.d_size.y * d_kernel;
+                block_grads.rot += sample.d_rot * d_kernel;
+                block_grads.r += d_color.r * sample.kernel;
+                block_grads.g += d_color.g * sample.kernel;
+                block_grads.b += d_color.b * sample.kernel;
+                block_grads.a += d_color.a * sample.kernel;
+                block_grads.scale_x += sample.d_scale.x * d_kernel;
+                block_grads.scale_y += sample.d_scale.y * d_kernel;
+                has_grad = true;
             }
-            b.composite *= inv;
-            b.composite += splat.color * smp.kernel;
-            b.t_before = denom;
+            b.below = b.below * inv + splat.color * sample.kernel;
+            b.log_below = log_through;
         }
 
-        if touched {
+        if has_grad {
             let grad = &grads[grad_base + splat_idx];
-            @if(atomic_f32) {
-                atomicAdd(&grad.x, grads_local.x);
-                atomicAdd(&grad.y, grads_local.y);
-                atomicAdd(&grad.w, grads_local.w);
-                atomicAdd(&grad.h, grads_local.h);
-                atomicAdd(&grad.rot, grads_local.rot);
-                atomicAdd(&grad.r, grads_local.r);
-                atomicAdd(&grad.g, grads_local.g);
-                atomicAdd(&grad.b, grads_local.b);
-                atomicAdd(&grad.a, grads_local.a);
-                atomicAdd(&grad.scale_x, grads_local.scale_x);
-                atomicAdd(&grad.scale_y, grads_local.scale_y);
-            } @else {
-                let sc = grad_scales(splat, info.canvas.dims);
-                atomicAdd(&grad.x, i32(round(grads_local.x * sc.lin.x)));
-                atomicAdd(&grad.y, i32(round(grads_local.y * sc.lin.y)));
-                atomicAdd(&grad.w, i32(round(grads_local.w * sc.lin.x)));
-                atomicAdd(&grad.h, i32(round(grads_local.h * sc.lin.y)));
-                atomicAdd(&grad.rot, i32(round(grads_local.rot * sc.quad)));
-                atomicAdd(&grad.r, i32(round(grads_local.r * sc.quad)));
-                atomicAdd(&grad.g, i32(round(grads_local.g * sc.quad)));
-                atomicAdd(&grad.b, i32(round(grads_local.b * sc.quad)));
-                atomicAdd(&grad.a, i32(round(grads_local.a * sc.quad)));
-                atomicAdd(&grad.scale_x, i32(round(grads_local.scale_x * sc.scale_norm.x)));
-                atomicAdd(&grad.scale_y, i32(round(grads_local.scale_y * sc.scale_norm.y)));
-            }
+            let scales = grad_scales(splat, info.canvas.dims);
+            atomicAdd(&grad.x, i32(round(block_grads.x * scales.lin.x)));
+            atomicAdd(&grad.y, i32(round(block_grads.y * scales.lin.y)));
+            atomicAdd(&grad.w, i32(round(block_grads.w * scales.lin.x)));
+            atomicAdd(&grad.h, i32(round(block_grads.h * scales.lin.y)));
+            atomicAdd(&grad.rot, i32(round(block_grads.rot * scales.quad)));
+            atomicAdd(&grad.r, i32(round(block_grads.r * scales.quad)));
+            atomicAdd(&grad.g, i32(round(block_grads.g * scales.quad)));
+            atomicAdd(&grad.b, i32(round(block_grads.b * scales.quad)));
+            atomicAdd(&grad.a, i32(round(block_grads.a * scales.quad)));
+            atomicAdd(&grad.scale_x, i32(round(block_grads.scale_x * scales.scale_norm.x)));
+            atomicAdd(&grad.scale_y, i32(round(block_grads.scale_y * scales.scale_norm.y)));
         }
     }
 }

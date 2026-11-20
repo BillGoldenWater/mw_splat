@@ -7,7 +7,10 @@ use image::{ImageBuffer, Rgba};
 use petgraph::unionfind::UnionFind;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
-use crate::ir::{Ir, Splat};
+use crate::{
+    constants::{REF_HEIGHT, RFE_RAMP_CAP},
+    ir::{Ir, Splat},
+};
 
 const MS_BANDWIDTH: f32 = 0.1;
 const MS_EPS: f32 = 0.01;
@@ -26,6 +29,9 @@ pub fn init(
     let dims = UVec2::from(input.dimensions());
     let canvasf = dims.as_vec2();
     let size = (canvasf.x * canvasf.y / n.max(1) as f32).sqrt().max(1.0);
+    let size_min = 2.0 * RFE_RAMP_CAP * canvasf.y / REF_HEIGHT;
+    let splat_size = size.max(size_min);
+    let splat_scale = size / splat_size;
 
     tracing::debug!("background");
     let background = background_color(input);
@@ -42,10 +48,10 @@ pub fn init(
                 feather_mean(input, p.x, p.y, size * 0.5, FEATHER);
             Splat {
                 pos: Vec2::new(p.x, canvasf.y - p.y) / canvasf,
-                size: Vec2::splat(size) / canvasf,
+                size: Vec2::splat(splat_size) / canvasf,
                 rot: 0.0,
                 color,
-                scale: Vec2::ONE,
+                scale: Vec2::splat(splat_scale),
             }
         })
         .collect();
@@ -57,7 +63,9 @@ pub fn init(
     }
 }
 
-fn background_color(image: &ImageBuffer<Rgba<f32>, Vec<f32>>) -> Vec4 {
+pub fn background_color(
+    image: &ImageBuffer<Rgba<f32>, Vec<f32>>,
+) -> Vec4 {
     if image.pixels().any(|p| p.0[3] < 1.0) {
         return Vec4::ZERO;
     }

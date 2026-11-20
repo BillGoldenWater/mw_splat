@@ -17,7 +17,7 @@ pub struct Ir {
     pub splats: Box<[Splat]>,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Splat {
     /// in uv space
     /// y up, 0..=1
